@@ -1,3 +1,4 @@
+```text
 .
 ├── data/               # Chứa các file dữ liệu test đầu vào (.json / .txt).
 │
@@ -11,3 +12,4 @@
 ├── main.py             # File chạy chính: Đọc dữ liệu, gọi solver và in kết quả cuối cùng.
 ├── requirements.txt    # Danh sách các thư viện Python cần cài đặt.
 └── README.md           # Tài liệu mô tả dự án và hướng dẫn chạy code.
+```
