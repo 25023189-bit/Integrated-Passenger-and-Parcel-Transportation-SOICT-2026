@@ -1,54 +1,21 @@
-## Cấu Trúc Thư Mục Dự Án
+**Tuần 1 (20/09 - 27/09): Nền Tảng & Lời Giải Cơ Sở**
+- [ ] Xây dựng các lớp/cấu trúc dữ liệu trong Python (Node, Request, Route, State).
+- [ ] Viết hàm kiểm tra tính hợp lệ của lộ trình (Checker/Validator).
+- [ ] Hiện thực thuật toán Greedy Insertion để tạo lời giải ban đầu hợp lệ có lợi nhuận dương.
+- [ ] *Dự phòng:* Viết thuật toán Random Insertion kèm cơ chế bỏ qua đơn vi phạm phòng trường hợp Greedy không chèn được đơn.
 
-```text
-.
-├── data/               # Chứa các file dữ liệu test đầu vào (.json / .txt).
-│
-├── src/                # Thư mục chứa mã nguồn cốt lõi.
-│   ├── models.py       # Định nghĩa các Class đối tượng (Node, Request, Route, Taxi).
-│   ├── checker.py      # Kiểm tra tính hợp lệ của lộ trình và tính điểm Benefit.
-│   ├── greedy.py       # Thuật toán sinh lời giải cơ sở ban đầu (Baseline).
-│   ├── operators.py    # Các toán tử phá hủy/sửa chữa lộ trình (Destroy, Repair, Local Search).
-│   └── alns.py         # Logic chính điều phối thuật toán ALNS.
-│
-├── main.py             # File chạy chính: Đọc dữ liệu, gọi solver và in kết quả cuối cùng.
-├── requirements.txt    # Danh sách các thư viện Python cần cài đặt.
-└── README.md           # Tài liệu mô tả dự án và hướng dẫn chạy code.
-```
+**Tuần 2 (28/09 - 04/10): Tối Ưu Cục Bộ (Local Search)**
+- [ ] Phát triển các toán tử di chuyển điểm: Relocate, Swap, 2-opt.
+- [ ] Kết hợp các toán tử với thuật toán Hill Climbing để cải thiện điểm số.
+- [ ] *Dự phòng:* Tách riêng 2 tập toán tử cho khách và bưu kiện nếu hàm Swap làm hỏng tính chất "chở khách đi thẳng".
 
----
+**Tuần 3 (05/10 - 12/10): Tích Hợp ALNS (Thuật toán lõi)**
+- [ ] Xây dựng các hàm phá hủy lộ trình (Random Destroy, Worst Cost Destroy, Shaw Destroy).
+- [ ] Xây dựng các hàm sửa chữa lộ trình (Greedy Repair, Regret Insertion).
+- [ ] Cài đặt cơ chế cập nhật trọng số toán tử động dựa trên điểm số thu được.
+- [ ] *Dự phòng:* Chuyển sang dùng Simulated Annealing chạy trên nền Local Search nếu ALNS sinh quá nhiều lỗi hoặc không hội tụ.
 
-## Quy Ước Đặt Tên Biến
-
-Để dễ dàng theo dõi và đối chiếu mã nguồn với mô hình toán học của đề bài, dự án tuân thủ quy tắc ánh xạ biến như sau:
-
-### 1. Yêu cầu Hành khách (Passenger)
-| Ký hiệu Toán học | Tên biến trong Python (`PassengerRequest`) | Ý nghĩa |
-| :--- | :--- | :--- |
-| $i$ | `id` | Mã số yêu cầu hành khách |
-| $P_i^n$ / $D_i^n$ | `pickup_node` / `dropoff_node` | Điểm đón / Điểm trả khách |
-| $T_i^n$ | `revenue` | Doanh thu thu được |
-| $[E_i^n, L_i^n]$ | `early_pickup` / `late_pickup` | Khung thời gian đón khách |
-| $S_i^n$ | `service_time` | Thời gian thực hiện đón/trả |
-
-### 2. Yêu cầu Bưu kiện (Parcel)
-| Ký hiệu Toán học | Tên biến trong Python (`ParcelRequest`) | Ý nghĩa |
-| :--- | :--- | :--- |
-| $j$ | `id` | Mã số yêu cầu bưu kiện |
-| $P_j^h$ / $D_j^h$ | `pickup_node` / `dropoff_node` | Điểm nhận / Điểm giao hàng |
-| $T_j^h$ | `revenue` | Doanh thu thu được |
-| $[E_j^{h,p}, L_j^{h,p}]$ | `early_pickup` / `late_pickup` | Khung thời gian lấy hàng |
-| $[E_j^{h,d}, L_j^{h,d}]$ | `early_dropoff` / `late_dropoff` | Khung thời gian giao hàng |
-| $S_j^h$ | `service_time` | Thời gian bốc dỡ hàng |
-| $w_j$ | `weight` | Khối lượng kiện hàng |
-
-### 3. Xe Taxi & Lộ trình
-| Ký hiệu Toán học | Tên biến trong Python (`Taxi` / `Route`) | Ý nghĩa |
-| :--- | :--- | :--- |
-| $k$ | `Taxi.id` | Mã số định danh xe Taxi |
-| $O_k$ | `Taxi.depot_node` | Điểm xuất phát ban đầu lúc $t=0$ |
-| $Q_k$ | `Taxi.capacity` | Sức chứa bưu kiện tối đa |
-| $R_k$ | `Route.stops` | Danh sách các điểm dừng đã lên lịch |
-| $load_k$ | `Route.current_load` | Tổng khối lượng bưu kiện đang chở |
-| $t(u, v)$ | `time_matrix[u][v]` | Ma trận thời gian di chuyển |
-| $c(u, v)$ | `cost_matrix[u][v]` | Ma trận chi phí di chuyển |
+**Tuần 4 (13/10 - 20/10): Tinh Chỉnh & Tối Ưu Tốc Độ**
+- [ ] Tinh chỉnh tham số thuật toán (nhiệt độ SA, hệ số thưởng ALNS).
+- [ ] Tối ưu hóa hiệu năng code (sử dụng PyPy, vectorized numpy, hoặc cache tính toán khoảng cách).
+- [ ] *Dự phòng (Chống TLE):* Thiết lập cơ chế ngắt thời gian cứng (timeout guard) để dừng vòng lặp và in kết quả tốt nhất khi sắp hết giờ.
