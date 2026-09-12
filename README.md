@@ -1,4 +1,4 @@
-## 📁 Cấu Trúc Thư Mục Dự Án
+## Cấu Trúc Thư Mục Dự Án
 
 ```text
 .
@@ -18,7 +18,7 @@
 
 ---
 
-## 🔤 Quy Ước Đặt Tên Biến (Data Mapping)
+## Quy Ước Đặt Tên Biến
 
 Để dễ dàng theo dõi và đối chiếu mã nguồn với mô hình toán học của đề bài, dự án tuân thủ quy tắc ánh xạ biến như sau:
 
