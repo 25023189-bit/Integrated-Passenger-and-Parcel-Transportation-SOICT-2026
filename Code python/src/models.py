@@ -4,49 +4,57 @@ from typing import List, Optional
 @dataclass
 class Node:
     """Đại diện cho một điểm trên bản đồ (v_r^k)"""
-    id: int                # ID duy nhất của Node
-    type: str              # Loại điểm: 'depot', 'passenger_pickup', 'passenger_dropoff', 'parcel_pickup', 'parcel_dropoff'
-    matrix_index: int      # Chỉ số (index) dùng để tra cứu t(u, v) và c(u, v) trong ma trận thời gian/chi phí
+    id: int               
+    type: str            
+    matrix_index: int    
 
 @dataclass
 class PassengerRequest:
     """Yêu cầu Hành khách i (1 <= i <= N)"""
-    id: int                # Mã yêu cầu khách (i)
-    pickup_node: Node      # Điểm đón khách (P_i^n)
-    dropoff_node: Node     # Điểm trả khách (D_i^n)
-    revenue: float         # Doanh thu (T_i^n)
-    early_pickup: float    # Thời gian đón sớm nhất (E_i^n)
-    late_pickup: float     # Thời gian đón muộn nhất (L_i^n)
-    service_time: float    # Thời gian phục vụ đón/trả (S_i^n)
+    id: int              
+    pickup_node: Node     
+    dropoff_node: Node   
+    revenue: float      
+    early_pickup: float  
+    late_pickup: float   
+    service_time: float    
 
 @dataclass
 class ParcelRequest:
     """Yêu cầu Bưu kiện j (1 <= j <= M)"""
-    id: int                # Mã yêu cầu bưu kiện (j)
-    pickup_node: Node      # Điểm nhận hàng (P_j^h)
-    dropoff_node: Node     # Điểm giao hàng (D_j^h)
-    revenue: float         # Doanh thu (T_j^h)
-    early_pickup: float    # Lấy hàng sớm nhất (E_j^{h,p})
-    late_pickup: float     # Lấy hàng muộn nhất (L_j^{h,p})
-    early_dropoff: float   # Giao hàng sớm nhất (E_j^{h,d})
-    late_dropoff: float    # Giao hàng muộn nhất (L_j^{h,d})
-    service_time: float    # Thời gian phục vụ lấy/giao (S_j^h)
-    weight: float          # Khối lượng bưu kiện (w_j)
+    id: int             
+    pickup_node: Node  
+    dropoff_node: Node    
+    revenue: float    
+    early_pickup: float 
+    late_pickup: float   
+    early_dropoff: float
+    late_dropoff: float 
+    service_time: float 
+    weight: float         
 
 @dataclass
 class Taxi:
     """Thông tin xe Taxi k (1 <= k <= K)"""
-    id: int                # Mã số xe (k)
-    depot_node: Node       # Điểm xuất phát ban đầu (O_k)
-    capacity: float        # Sức chứa bưu kiện tối đa (Q_k)
+    id: int          
+    depot_node: Node  
+    capacity: float      
 
 @dataclass
 class Route:
     """Lộ trình R_k của một taxi k"""
-    taxi: Taxi             # Xe taxi thực hiện lộ trình này
-    stops: List[Node] = field(default_factory=list) # Chuỗi các điểm dừng (v_0^k, v_1^k, ..., v_{m_k}^k)
+    taxi: Taxi            
+    stops: List[Node] = field(default_factory=list) 
     
-    # Các thuộc tính theo dõi trạng thái hiện tại (cập nhật dần qua checker)
-    current_load: float = 0.0      # Tải trọng bưu kiện hiện tại (load_k <= Q_k)
-    current_time: float = 0.0      # Thời gian hiện tại của xe
-    total_cost: float = 0.0        # Tổng chi phí di chuyển
+    
+    current_load: float = 0.0     
+    current_time: float = 0.0    
+    total_cost: float = 0.0     
+@dataclass
+class ProblemInstance:
+    """Lưu trữ toàn bộ dữ liệu của một testcase""" 
+    taxis: List[Taxi]
+    passengers: List[PassengerRequest]
+    parcels: List[ParcelRequest]
+    time_matrix: List[List[float]] # Lưu t(u, v)
+    cost_matrix: List[List[float]] # Lưu c(u, v)  
