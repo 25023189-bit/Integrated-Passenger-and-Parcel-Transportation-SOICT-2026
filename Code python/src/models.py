@@ -1,14 +1,14 @@
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple, Dict
 
-@dataclass
+@dataclass(unsafe_hash=True)
 class Node:
     """Đại diện cho một điểm trên bản đồ (v_r^k)"""
     id: int               
     type: str            
     matrix_index: int    
 
-@dataclass
+@dataclass(unsafe_hash=True)
 class PassengerRequest:
     """Yêu cầu Hành khách i (1 <= i <= N)"""
     id: int              
@@ -19,7 +19,7 @@ class PassengerRequest:
     late_pickup: float   
     service_time: float    
 
-@dataclass
+@dataclass(unsafe_hash=True)
 class ParcelRequest:
     """Yêu cầu Bưu kiện j (1 <= j <= M)"""
     id: int             
@@ -55,10 +55,9 @@ class ProblemInstance:
     taxis: List[Taxi]
     passengers: List[PassengerRequest]
     parcels: List[ParcelRequest]
-    time_matrix: List[List[float]] # Lưu t(u, v)
-    cost_matrix: List[List[float]] # Lưu c(u, v)
+    time_matrix: List[List[float]]
+    cost_matrix: List[List[float]]
 
-    # Dictionary hỗ trợ tra cứu nhanh O(1) từ Node index sang Request
     _node_to_passenger: Dict[int, PassengerRequest] = field(default_factory=dict, init=False)
     _node_to_parcel: Dict[int, ParcelRequest] = field(default_factory=dict, init=False)
 
@@ -71,15 +70,12 @@ class ProblemInstance:
             self._node_to_parcel[h.dropoff_node.matrix_index] = h
 
     def get_passenger_by_node(self, node: Node) -> Optional[PassengerRequest]:
-        """Tra cứu yêu cầu hành khách tương ứng với Node."""
         return self._node_to_passenger.get(node.matrix_index)
 
     def get_parcel_by_node(self, node: Node) -> Optional[ParcelRequest]:
-        """Tra cứu yêu cầu bưu kiện tương ứng với Node."""
         return self._node_to_parcel.get(node.matrix_index)
 
     def get_node_time_windows(self, node: Node) -> Tuple[float, float, float]:
-        """Trả về tuple (early_time, late_time, service_time) tương ứng với từng loại Node."""
         pass_req = self.get_passenger_by_node(node)
         if pass_req:
             return pass_req.early_pickup, pass_req.late_pickup, pass_req.service_time

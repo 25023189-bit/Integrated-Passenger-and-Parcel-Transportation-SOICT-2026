@@ -122,3 +122,30 @@ def insert_passenger_request_direct(
     )
     
     return new_stops
+
+def calculate_objective_value(routes: List[Route], instance: ProblemInstance) -> float:
+    """Tính tổng Benefit = Tổng Doanh thu đơn đã phục vụ - Tổng Chi phí di chuyển của các xe."""
+    total_revenue = 0.0
+    total_cost = 0.0
+
+    for route in routes:
+        if not route.stops:
+            continue
+        
+        # 1. Chi phí di chuyển của xe k
+        cost_mat = instance.cost_matrix
+        c_route = cost_mat[route.taxi.depot_node.matrix_index][route.stops[0].matrix_index]
+        for idx in range(len(route.stops) - 1):
+            c_route += cost_mat[route.stops[idx].matrix_index][route.stops[idx + 1].matrix_index]
+        total_cost += c_route
+
+        # 2. Doanh thu từ các đơn được phục vụ
+        for node in route.stops:
+            if node.type == 'PASSENGER_PICKUP':
+                p = instance.get_passenger_by_node(node)
+                if p: total_revenue += p.revenue
+            elif node.type == 'PARCEL_PICKUP':
+                h = instance.get_parcel_by_node(node)
+                if h: total_revenue += h.revenue
+
+    return total_revenue - total_cost
