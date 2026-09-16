@@ -9,6 +9,7 @@ if str(SRC_DIR) not in sys.path:
 # 2. Import module từ src/
 from models import Node, PassengerRequest, ParcelRequest, Taxi, ProblemInstance
 from greedy_solver import GreedySolver, calculate_objective_value
+from random_solver import RandomSolver
 from validator import is_route_valid
 
 def main():
@@ -55,19 +56,26 @@ def main():
         cost_matrix=cost_matrix
     )
 
-    # 4. Chạy Greedy Solver
+    # 4. Chạy thuật toán chính: Greedy Solver
     solver = GreedySolver(instance)
     solution_routes = solver.solve()
+    total_benefit = calculate_objective_value(solution_routes, instance)
 
-    # 5. In kết quả kiểm thử Tuần 1
-    print("=== KẾT QUẢ THỰC THI TUẦN 1 ===")
+    # 5. Cơ chế Fallback: Nếu Greedy trả về Benefit <= 0, kích hoạt Random Solver dự phòng
+    if total_benefit <= 0:
+        print("[WARNING] Greedy Solver không tạo được lợi nhuận dương. Đang chuyển sang Random Solver dự phòng...")
+        fallback_solver = RandomSolver(instance, seed=42)
+        solution_routes = fallback_solver.solve()
+        total_benefit = calculate_objective_value(solution_routes, instance)
+
+    # 6. In kết quả thực thi
+    print("=== KẾT QUẢ THỰC THI ===")
     for route in solution_routes:
         stop_ids = [node.id for node in route.stops]
         valid = is_route_valid(route, instance)
         print(f"Taxi {route.taxi.id} Stops: {stop_ids}")
         print(f"Lộ trình hợp lệ (Is Valid): {valid}")
 
-    total_benefit = calculate_objective_value(solution_routes, instance)
     print(f"Tổng Lợi Nhuận (Total Benefit): {total_benefit:.2f}")
 
 if __name__ == "__main__":
