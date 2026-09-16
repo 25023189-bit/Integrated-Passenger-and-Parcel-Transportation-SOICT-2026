@@ -1,82 +1,97 @@
-import sys
-from pathlib import Path
+import time
+import random
 
-# 1. Định tuyến đường dẫn tới thư mục src/ trước khi import các module
-SRC_DIR = Path(__file__).resolve().parent / "src"
-if str(SRC_DIR) not in sys.path:
-    sys.path.append(str(SRC_DIR))
-
-# 2. Import module từ src/
 from models import Node, PassengerRequest, ParcelRequest, Taxi, ProblemInstance
 from greedy_solver import GreedySolver, calculate_objective_value
-from random_solver import RandomSolver
-from validator import is_route_valid
 
-def main():
-    # 3. Khởi tạo dữ liệu giả lập (Dummy Data) để kiểm thử
-    nodes = [
-        Node(id=0, type='DEPOT', matrix_index=0),
-        Node(id=1, type='PASSENGER_PICKUP', matrix_index=1),
-        Node(id=2, type='PASSENGER_DROPOFF', matrix_index=2)
-    ]
-
-    taxis = [Taxi(id=1, depot_node=nodes[0], capacity=10.0)]
-
-    passengers = [
-        PassengerRequest(
-            id=1, 
-            pickup_node=nodes[1], 
-            dropoff_node=nodes[2], 
-            revenue=100.0, 
-            early_pickup=0.0, 
-            late_pickup=50.0, 
-            service_time=2.0
-        )
-    ]
-
+def generate_random_instance(
+    n_passengers: int, 
+    n_parcels: int, 
+    n_taxis: int, 
+    seed: int = 42
+) -> ProblemInstance:
+    """Sinh dữ liệu giả lập có quy mô tùy chỉnh."""
+    random.seed(seed)
+    
+    # Depot node
+    nodes = [Node(id=0, type='DEPOT', matrix_index=0)]
+    node_idx = 1
+    
+    passengers = []
     parcels = []
 
-    time_matrix = [
-        [0.0, 5.0, 10.0], 
-        [5.0, 0.0, 5.0], 
-        [10.0, 5.0, 0.0]
-    ]
+    # 1. Sinh Hành khách
+    for i in range(1, n_passengers + 1):
+        p_node = Node(id=node_idx, type='PASSENGER_PICKUP', matrix_index=node_idx)
+        node_idx += 1
+        d_node = Node(id=node_idx, type='PASSENGER_DROPOFF', matrix_index=node_idx)
+        node_idx += 1
+        nodes.extend([p_node, d_node])
+        
+        passengers.append(PassengerRequest(
+            id=i, pickup_node=p_node, dropoff_node=d_node,
+            revenue=100.0, early_pickup=0.0, late_pickup=1000.0, service_time=2.0
+        ))
 
-    cost_matrix = [
-        [0.0, 10.0, 20.0], 
-        [10.0, 0.0, 10.0], 
-        [20.0, 10.0, 0.0]
-    ]
+    # 2. Sinh Bưu kiện
+    for j in range(1, n_parcels + 1):
+        p_node = Node(id=node_idx, type='PARCEL_PICKUP', matrix_index=node_idx)
+        node_idx += 1
+        d_node = Node(id=node_idx, type='PARCEL_DROPOFF', matrix_index=node_idx)
+        node_idx += 1
+        nodes.extend([p_node, d_node])
+        
+        parcels.append(ParcelRequest(
+            id=j, pickup_node=p_node, dropoff_node=d_node,
+            weight=2.0, revenue=50.0, early_pickup=0.0, late_pickup=1000.0,
+            early_dropoff=0.0, late_dropoff=1000.0, service_time=1.0
+        ))
 
-    instance = ProblemInstance(
-        taxis=taxis, 
-        passengers=passengers, 
-        parcels=parcels, 
-        time_matrix=time_matrix, 
-        cost_matrix=cost_matrix
+    # 3. Sinh Taxis
+    taxis = [Taxi(id=k, depot_node=nodes[0], capacity=10.0) for k in range(1, n_taxis + 1)]
+
+    # 4. Sinh Ma trận Thời gian & Chi phí
+    total_nodes = len(nodes)
+    cost_matrix = [[0.0] * total_nodes for _ in range(total_nodes)]
+    time_matrix = [[0.0] * total_nodes for _ in range(total_nodes)]
+
+    for r in range(total_nodes):
+        for c in range(total_nodes):
+            if r != c:
+                val = float(random.randint(5, 25))
+                cost_matrix[r][c] = val
+                time_matrix[r][c] = val / 2.0  # Tốc độ giả định 2 đơn vị khoảng cách / đơn vị thời gian
+
+    return ProblemInstance(
+        taxis=taxis, passengers=passengers, parcels=parcels,
+        time_matrix=time_matrix, cost_matrix=cost_matrix
     )
 
-    # 4. Chạy thuật toán chính: Greedy Solver
-    solver = GreedySolver(instance)
-    solution_routes = solver.solve()
-    total_benefit = calculate_objective_value(solution_routes, instance)
+def run_benchmark():
+    test_cases = [
+        {"name": "Nhỏ (Small)", "passengers": 10, "parcels": 10, "taxis": 3},
+        {"name": "Vừa (Medium)", "passengers": 20, "parcels": 20, "taxis": 5},
+        {"name": "Lớn (Large)", "passengers": 35, "parcels": 35, "taxis": 8},
+    ]
 
-    # 5. Cơ chế Fallback: Nếu Greedy trả về Benefit <= 0, kích hoạt Random Solver dự phòng
-    if total_benefit <= 0:
-        print("[WARNING] Greedy Solver không tạo được lợi nhuận dương. Đang chuyển sang Random Solver dự phòng...")
-        fallback_solver = RandomSolver(instance, seed=42)
-        solution_routes = fallback_solver.solve()
-        total_benefit = calculate_objective_value(solution_routes, instance)
+    print("=== BẮT ĐẦU BENCHMARK GREEDY SOLVER ===")
+    for case in test_cases:
+        p, h, t = case["passengers"], case["parcels"], case["taxis"]
+        instance = generate_random_instance(n_passengers=p, n_parcels=h, n_taxis=t)
 
-    # 6. In kết quả thực thi
-    print("=== KẾT QUẢ THỰC THI ===")
-    for route in solution_routes:
-        stop_ids = [node.id for node in route.stops]
-        valid = is_route_valid(route, instance)
-        print(f"Taxi {route.taxi.id} Stops: {stop_ids}")
-        print(f"Lộ trình hợp lệ (Is Valid): {valid}")
+        start_time = time.time()
+        solver = GreedySolver(instance)
+        routes = solver.solve()
+        elapsed_time = time.time() - start_time
+        
+        benefit = calculate_objective_value(routes, instance)
+        total_stops = sum(len(r.stops) for r in routes)
 
-    print(f"Tổng Lợi Nhuận (Total Benefit): {total_benefit:.2f}")
+        print(f"--- Kịch bản: {case['name']} ({p} Khách, {h} Hàng, {t} Xe) ---")
+        print(f"Thời gian chạy: {elapsed_time:.4f} giây")
+        print(f"Tổng Lợi Nhuận: {benefit:.2f}")
+        print(f"Tổng số điểm dừng đã chèn thành công: {total_stops}/{2*(p+h)}")
+        print("-" * 50)
 
 if __name__ == "__main__":
-    main()
+    run_benchmark()
