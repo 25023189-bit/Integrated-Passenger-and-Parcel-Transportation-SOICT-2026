@@ -29,7 +29,7 @@ class RandomSolver:
         temp_route = Route(taxi=route.taxi, stops=new_stops)
         return self._get_route_cost(temp_route) - old_cost
 
-    def solve() -> List[Route]:
+    def solve(self) -> List[Route]:
         routes = [Route(taxi=t) for t in self.instance.taxis]
         unserved_passengers = list(self.instance.passengers)
         unserved_parcels = list(self.instance.parcels)

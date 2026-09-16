@@ -20,12 +20,65 @@ class GreedySolver:
             cost += cost_mat[stops[idx].matrix_index][stops[idx + 1].matrix_index]
         return cost
 
-    def calculate_delta_cost(self, route: Route, new_stops: List[Node]) -> float:
-        """Tính chênh lệch chi phí di chuyển Delta c(u, v) giữa lộ trình mới và cũ."""
-        old_cost = self.get_route_cost(route)
-        temp_route = Route(taxi=route.taxi, stops=new_stops)
-        new_cost = self.get_route_cost(temp_route)
-        return new_cost - old_cost
+    def get_passenger_delta_cost(self, route: Route, p_node: Node, d_node: Node, pos: int) -> float:
+        """
+        [Tối ưu O(1)]: Tính Delta Cost khi chèn liên tiếp [Pickup, Dropoff] của Hành khách vào vị trí pos.
+        """
+        stops = route.stops
+        cost_mat = self.instance.cost_matrix
+        
+        # Xác định 2 nút kề bên vị trí chèn
+        A = stops[pos - 1] if pos > 0 else route.taxi.depot_node
+        B = stops[pos] if pos < len(stops) else None
+        
+        # Tính chi phí cạnh cũ bị xóa và các cạnh mới được thêm vào
+        cost_removed = 0.0 if B is None else cost_mat[A.matrix_index][B.matrix_index]
+        cost_added = (cost_mat[A.matrix_index][p_node.matrix_index] + 
+                      cost_mat[p_node.matrix_index][d_node.matrix_index])
+        if B is not None:
+            cost_added += cost_mat[d_node.matrix_index][B.matrix_index]
+            
+        return cost_added - cost_removed
+
+    def get_parcel_delta_cost(self, route: Route, p_node: Node, d_node: Node, i: int, j: int) -> float:
+        """
+        [Tối ưu O(1)]: Tính Delta Cost khi chèn Pickup tại vị trí i và Dropoff tại vị trí j (trong mảng ban đầu).
+        """
+        stops = route.stops
+        cost_mat = self.instance.cost_matrix
+        
+        if i == j: # Trường hợp chèn liền kề nhau
+            A = stops[i - 1] if i > 0 else route.taxi.depot_node
+            B = stops[i] if i < len(stops) else None
+            
+            cost_removed = 0.0 if B is None else cost_mat[A.matrix_index][B.matrix_index]
+            cost_added = (cost_mat[A.matrix_index][p_node.matrix_index] + 
+                          cost_mat[p_node.matrix_index][d_node.matrix_index])
+            if B is not None:
+                cost_added += cost_mat[d_node.matrix_index][B.matrix_index]
+            return cost_added - cost_removed
+            
+        else: # Trường hợp chèn tách rời (i < j)
+            # Tại điểm Pickup (vị trí i)
+            A = stops[i - 1] if i > 0 else route.taxi.depot_node
+            B = stops[i] 
+            
+            # Tại điểm Dropoff (vị trí j trong mảng ban đầu)
+            C = stops[j - 1] 
+            D_next = stops[j] if j < len(stops) else None
+            
+            cost_removed = cost_mat[A.matrix_index][B.matrix_index]
+            cost_added = (cost_mat[A.matrix_index][p_node.matrix_index] + 
+                          cost_mat[p_node.matrix_index][B.matrix_index])
+            
+            if D_next is not None:
+                cost_removed += cost_mat[C.matrix_index][D_next.matrix_index]
+                cost_added += (cost_mat[C.matrix_index][d_node.matrix_index] + 
+                               cost_mat[d_node.matrix_index][D_next.matrix_index])
+            else:
+                cost_added += cost_mat[C.matrix_index][d_node.matrix_index]
+                
+            return cost_added - cost_removed
 
     def find_best_passenger_insertion(self) -> Tuple[Optional[PassengerRequest], Optional[int], Optional[int], float]:
         """Tìm vị trí chèn hành khách cho lợi nhuận tăng thêm Delta Benefit lớn nhất."""
@@ -40,7 +93,7 @@ class GreedySolver:
                     temp_route = Route(taxi=route.taxi, stops=temp_stops)
 
                     if is_route_valid(temp_route, self.instance):
-                        delta_cost = self.calculate_delta_cost(route, temp_stops)
+                        delta_cost = self.get_passenger_delta_cost(route, req.pickup_node, req.dropoff_node, i)
                         gain = req.revenue - delta_cost
                         if gain > max_gain:
                             max_gain = gain
@@ -66,7 +119,7 @@ class GreedySolver:
                         temp_route = Route(taxi=route.taxi, stops=temp_stops)
 
                         if is_route_valid(temp_route, self.instance):
-                            delta_cost = self.calculate_delta_cost(route, temp_stops)
+                            delta_cost = self.get_parcel_delta_cost(route, p_node, d_node, i, j)
                             gain = req.revenue - delta_cost
                             if gain > max_gain:
                                 max_gain = gain
@@ -113,8 +166,6 @@ def insert_passenger_request_direct(
     """
     current_stops = route.stops
     
-    # [Tối ưu & Đảm bảo đúng luật]: Chèn đồng thời cặp [P_i^n, D_i^n] liên tiếp vào index
-    # Lý do: Việc chèn 2 nút kề nhau đảm bảo v_{r+1}^k luôn luôn là D_i^n ngay khi vừa sinh lời giải
     new_stops = (
         current_stops[:insert_idx] + 
         [passenger_req.pickup_node, passenger_req.dropoff_node] + 
