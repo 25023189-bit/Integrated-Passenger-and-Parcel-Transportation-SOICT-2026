@@ -25,9 +25,10 @@ from random_solver import RandomSolver
 def generate_demo_instance() -> ProblemInstance:
     """
     Sinh 1 test case NHỎ (2 hành khách, 2 bưu kiện, 2 xe) với tọa độ
-    tường minh, để có thể tự tính tay và so sánh với kết quả của code.
-    Quy ước: cost = khoảng cách Euclid, time = cost / 2.0 (giống main.py gốc).
+    tường minh, để có thể tự tính tay và so sánh với kết quả của code
+    Quy ước: cost = khoảng cách Euclid, time = cost / 2.0 )
     """
+
     # (id_node, type, (x, y))
     coords = [
         (0, 'DEPOT',             (0, 0)),
@@ -40,25 +41,37 @@ def generate_demo_instance() -> ProblemInstance:
         (7, 'PARCEL_PICKUP',     (3, 3)),   # Hàng D lấy
         (8, 'PARCEL_DROPOFF',    (0, 4)),   # Hàng D giao
     ]
+
+    # Tạo danh sách đối tượng Node từ coords (mỗi Node ứng với 1 dòng trong ma trận)
     nodes = [Node(id=i, type=t, matrix_index=i) for i, t, _ in coords]
+
+    # Tách riêng phần tọa độ (x, y) ra để tính khoảng cách
     xy = [c for _, _, c in coords]
 
     n = len(nodes)
+
+    # Khởi tạo ma trận chi phí và ma trận thời gian toàn số 0, kích thước n x n
     cost_matrix = [[0.0] * n for _ in range(n)]
     time_matrix = [[0.0] * n for _ in range(n)]
     for r in range(n):
         for c in range(n):
-            if r != c:
+            if r != c:  # Không tính khoảng cách từ 1 node đến chính nó (giữ = 0)
                 dx = xy[r][0] - xy[c][0]
                 dy = xy[r][1] - xy[c][1]
-                dist = round(math.hypot(dx, dy), 2)
-                cost_matrix[r][c] = dist
-                time_matrix[r][c] = round(dist / 2.0, 2)
 
+                # Khoảng cách Euclid giữa 2 điểm, làm tròn 2 chữ số thập phân
+                dist = round(math.hypot(dx, dy), 2)
+                cost_matrix[r][c] = dist                  # Chi phí = khoảng cách
+                time_matrix[r][c] = round(dist / 2.0, 2)  # Thời gian = chi phí / tốc độ (2 đơn vị/thời gian)
+ 
+    # Khai báo 2 yêu cầu Hành khách, mỗi yêu cầu gắn với 1 cặp node (pickup, dropoff)
     passengers = [
         PassengerRequest(
             id=1, pickup_node=nodes[1], dropoff_node=nodes[2],
-            revenue=100.0, early_pickup=0.0, late_pickup=50.0, service_time=1.0
+            revenue=100.0,        # Doanh thu nếu phục vụ được khách A
+            early_pickup=0.0,     # Sớm nhất có thể đón lúc t=0
+            late_pickup=50.0,     # Muộn nhất phải đón trước t=50, quá thì vi phạm
+            service_time=1.0      # Thời gian phục vụ tại mỗi điểm đón/trả
         ),
         PassengerRequest(
             id=2, pickup_node=nodes[3], dropoff_node=nodes[4],
@@ -66,40 +79,47 @@ def generate_demo_instance() -> ProblemInstance:
         ),
     ]
 
+    # Khai báo 2 yêu cầu Bưu kiện, có thêm early/late cho cả pickup lẫn dropoff và trọng lượng (weight)
     parcels = [
         ParcelRequest(
             id=1, pickup_node=nodes[5], dropoff_node=nodes[6],
-            revenue=60.0, weight=3.0,
+            revenue=60.0, weight=3.0,   # Hàng C nặng 3kg
             early_pickup=0.0, late_pickup=50.0,
             early_dropoff=0.0, late_dropoff=50.0, service_time=1.0
         ),
         ParcelRequest(
             id=2, pickup_node=nodes[7], dropoff_node=nodes[8],
-            revenue=40.0, weight=2.0,
+            revenue=40.0, weight=2.0,   # Hàng D nặng 2kg
             early_pickup=0.0, late_pickup=50.0,
             early_dropoff=0.0, late_dropoff=50.0, service_time=1.0
         ),
     ]
 
+    # Khai báo 2 xe taxi, cùng xuất phát từ Depot (nodes[0]), sức chứa bưu kiện tối đa = 5
     taxis = [
         Taxi(id=1, depot_node=nodes[0], capacity=5.0),
         Taxi(id=2, depot_node=nodes[0], capacity=5.0),
     ]
-
+ 
+    # Gói toàn bộ dữ liệu (xe, khách, hàng, 2 ma trận) vào 1 đối tượng ProblemInstance
     return ProblemInstance(
         taxis=taxis, passengers=passengers, parcels=parcels,
         time_matrix=time_matrix, cost_matrix=cost_matrix
     )
 
-
 def print_node_table(instance: ProblemInstance):
+    """In ra bảng liệt kê toàn bộ node đang có trong instance, để dễ đối chiếu id <-> loại node."""
     print("Bảng các Node trong dữ liệu demo:")
     print(f"{'id':>3} {'type':<18} {'matrix_index':>12}")
+ 
+    # Gom tất cả node lại thành 1 danh sách: depot + (pickup, dropoff) của từng khách/hàng
     all_nodes = [instance.taxis[0].depot_node]
     for p in instance.passengers:
         all_nodes += [p.pickup_node, p.dropoff_node]
     for h in instance.parcels:
         all_nodes += [h.pickup_node, h.dropoff_node]
+ 
+    # In từng dòng: id node, loại node, chỉ số trong ma trận (matrix_index)
     for node in all_nodes:
         print(f"{node.id:>3} {node.type:<18} {node.matrix_index:>12}")
 
@@ -160,7 +180,7 @@ def demo_validator(instance: ProblemInstance):
     p_a = instance.passengers[0]   # nodes 1, 2
     h_c = instance.parcels[0]      # nodes 5, 6
 
-    # Lộ trình HỢP LỆ: đón/trả khách A liền kề, rồi lấy/giao hàng C 
+    # Lộ trình hợp lệ: đón/trả khách A liền kề, rồi lấy/giao hàng C 
     good_route = Route(taxi=taxi, stops=[
         p_a.pickup_node, p_a.dropoff_node, h_c.pickup_node, h_c.dropoff_node
     ])
@@ -171,7 +191,7 @@ def demo_validator(instance: ProblemInstance):
     print(f"  validate_direct_passenger_flow = {validate_direct_passenger_flow(good_route, instance)}")
     print(f"  is_route_valid (gộp cả 4)      = {is_route_valid(good_route, instance)}")
 
-    # Lộ trình VI PHẠM: chèn 1 điểm khác xen giữa đón/trả khách A (phá vỡ Công thức 7)
+    # Lộ trình vi phạm: chèn 1 điểm khác xen giữa đón/trả khách A (phá vỡ Công thức 7)
     bad_route = Route(taxi=taxi, stops=[
         p_a.pickup_node, h_c.pickup_node, p_a.dropoff_node, h_c.dropoff_node
     ])
@@ -179,7 +199,7 @@ def demo_validator(instance: ProblemInstance):
     print(f"  validate_direct_passenger_flow = {validate_direct_passenger_flow(bad_route, instance)}  (False = đúng như kỳ vọng)")
     print(f"  is_route_valid (gộp cả 4)      = {is_route_valid(bad_route, instance)}")
 
-    # --- Lộ trình VI PHẠM tải trọng: giả lập taxi sức chứa nhỏ ---
+    # --- Lộ trình vi phạm tải trọng: giả lập taxi sức chứa nhỏ ---
     small_taxi = Taxi(id=99, depot_node=taxi.depot_node, capacity=2.0)  # nhỏ hơn weight hàng C=3
     overload_route = Route(taxi=small_taxi, stops=[h_c.pickup_node, h_c.dropoff_node])
     print("\nLộ trình VI PHẠM tải trọng: xe capacity=2 nhưng hàng C nặng 3")
