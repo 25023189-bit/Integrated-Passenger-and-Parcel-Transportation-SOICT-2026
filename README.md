@@ -1,21 +1,36 @@
-**Tuần 1 (20/09 - 27/09): Nền Tảng & Lời Giải Cơ Sở**
-- [ ] Xây dựng các lớp/cấu trúc dữ liệu trong Python (Node, Request, Route, State).
-- [ ] Viết hàm kiểm tra tính hợp lệ của lộ trình (Checker/Validator).
-- [ ] Hiện thực thuật toán Greedy Insertion để tạo lời giải ban đầu hợp lệ có lợi nhuận dương.
-- [ ] *Dự phòng:* Viết thuật toán Random Insertion kèm cơ chế bỏ qua đơn vi phạm phòng trường hợp Greedy không chèn được đơn.
+# README - TUẦN 1: LOCAL SEARCH & DELTA EVALUATION
 
-**Tuần 2 (28/09 - 04/10): Tối Ưu Cục Bộ (Local Search)**
-- [ ] Phát triển các toán tử di chuyển điểm: Relocate, Swap, 2-opt.
-- [ ] Kết hợp các toán tử với thuật toán Hill Climbing để cải thiện điểm số.
-- [ ] *Dự phòng:* Tách riêng 2 tập toán tử cho khách và bưu kiện nếu hàm Swap làm hỏng tính chất "chở khách đi thẳng".
+**Thời gian:** 21/09/2026 – 26/09/2026  
+**Mục tiêu:** Cải thiện kết quả từ Greedy Solver bằng thuật toán Tìm kiếm cục bộ (Local Search) kết hợp tính toán chênh lệch chi phí Delta O(1).
 
-**Tuần 3 (05/10 - 12/10): Tích Hợp ALNS (Thuật toán lõi)**
-- [ ] Xây dựng các hàm phá hủy lộ trình (Random Destroy, Worst Cost Destroy, Shaw Destroy).
-- [ ] Xây dựng các hàm sửa chữa lộ trình (Greedy Repair, Regret Insertion).
-- [ ] Cài đặt cơ chế cập nhật trọng số toán tử động dựa trên điểm số thu được.
-- [ ] *Dự phòng:* Chuyển sang dùng Simulated Annealing chạy trên nền Local Search nếu ALNS sinh quá nhiều lỗi hoặc không hội tụ.
+---
 
-**Tuần 4 (13/10 - 20/10): Tinh Chỉnh & Tối Ưu Tốc Độ**
-- [ ] Tinh chỉnh tham số thuật toán (nhiệt độ SA, hệ số thưởng ALNS).
-- [ ] Tối ưu hóa hiệu năng code (sử dụng PyPy, vectorized numpy, hoặc cache tính toán khoảng cách).
-- [ ] *Dự phòng (Chống TLE):* Thiết lập cơ chế ngắt thời gian cứng (timeout guard) để dừng vòng lặp và in kết quả tốt nhất khi sắp hết giờ.
+## 1. Phân Công Nhiệm Vụ
+
+### Hà Thu (Nhánh 1: Cấu trúc & Toán tử)
+* **File làm việc:** `operators.py`
+* **Nhiệm vụ:**
+  * Code toán tử `relocate(route, node_idx, target_idx)` và `swap(route1, route2, node_idx1, node_idx2)`.
+  * Đảm bảo **Pair Mode**: Khi di chuyển đơn khách, luôn đi liền cặp `[Pickup, Dropoff]`.
+  * Phân loại toán tử nội bộ 1 xe (`intra_route`) và giữa các xe (`inter_route`).
+
+### Dũng (Nhánh 2: Tối ưu & Thuật toán)
+* **File làm việc:** `evaluator.py`, `hill_climbing.py`
+* **Nhiệm vụ:**
+  * Code hàm `calculate_delta_cost(...)` tính chênh lệch chi phí O(1).
+  * Code hàm `calculate_delta_time(...)` và `check_capacity_delta(...)` để ngắt sớm khi vi phạm.
+  * Xây dựng lớp `HillClimbingSolver` điều phối vòng lặp Local Search.
+
+--
+
+## 2. Nguyên Tắc Làm Việc Song Song
+
+1. **Giao tiếp qua Interface:** Thống nhất trước tên hàm và tham số truyền vào, không ngồi chờ nhau.
+2. **Độc lập File:** 
+   * Hà Thu chỉ sửa `operators.py`.
+   * Dũng chỉ sửa `evaluator.py` và `hill_climbing.py`.
+   * Không tự ý thay đổi `models.py` hoặc `validator.py`.
+3. **Test độc lập:**
+   * Hà Thu dùng `validator.py` cũ để kiểm tra logic mảng.
+   * Dũng dùng dữ liệu giả lập để kiểm tra vòng lặp Hill Climbing.
+4. **Quy trình ghép code:** Dũng import `operators.py` vào `hill_climbing.py` và chạy test tổng thể trên `main.py`.
