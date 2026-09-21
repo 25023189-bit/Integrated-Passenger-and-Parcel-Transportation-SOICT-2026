@@ -1,4 +1,4 @@
-# README - TUẦN 1: LOCAL SEARCH & DELTA EVALUATION
+# TUẦN 1: LOCAL SEARCH & DELTA EVALUATION
 
 **Thời gian:** 21/09/2026 – 26/09/2026  
 **Mục tiêu:** Cải thiện kết quả từ Greedy Solver bằng thuật toán Tìm kiếm cục bộ (Local Search) kết hợp tính toán chênh lệch chi phí Delta O(1).
