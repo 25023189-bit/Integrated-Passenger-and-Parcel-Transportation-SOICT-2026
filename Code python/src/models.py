@@ -10,7 +10,7 @@ class Node:
     id: int               # id duy nhất của node, dùng để in/so sánh cho dễ đọc
     type: str             # loại node: 'DEPOT', 'PASSENGER_PICKUP', 'PASSENGER_DROPOFF', 'PARCEL_PICKUP', 'PARCEL_DROPOFF'
     matrix_index: int     # chỉ số hàng/cột tương ứng của node này trong ma trận time/cost  
-
+    
 @dataclass(unsafe_hash=True)
 class PassengerRequest:
     """Yêu cầu Hành khách i (1 <= i <= N)"""
