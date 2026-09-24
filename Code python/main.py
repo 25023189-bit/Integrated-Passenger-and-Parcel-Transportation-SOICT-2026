@@ -424,6 +424,108 @@ def demo_evaluator(instance: ProblemInstance):
         print("     [insert_idx, dropoff_idx), không cộng tới hết route.")
 
 
+# 5d: Test riêng calculate_delta_time() bằng số liệu TỰ TAY dựng (không phụ thuộc
+#     dữ liệu demo ngẫu nhiên), để có thể dò lại từng bước bằng tay/máy tính.
+
+def demo_evaluator_delta_time():
+    """
+    Dựng 1 mini ProblemInstance CHỈ để test calculate_delta_time():
+      - 1 depot O (matrix_index 0)
+      - node A (matrix_index 1): parcel pickup của bưu kiện P1, window [0, 100]
+      - node B (matrix_index 2): parcel dropoff của bưu kiện P1, window [0, 100]
+      - node X (matrix_index 3): parcel pickup của bưu kiện P2 - node sẽ được CHÈN
+        giữa A và B, window [0, 20] hoặc [0, 6] tùy case test
+
+    Ma trận thời gian t(u, v) tự chọn (không đối xứng, đúng tinh thần đề bài):
+        t(O,A)=5   t(O,B)=10  t(O,X)=7
+        t(A,B)=4   t(A,X)=3
+        t(B,X)=6
+
+    ---- Case 1: X có window rộng [0, 20] -> chèn hợp lệ ----
+    Tính TAY (theo đúng công thức 2,3,4 trong đề bài):
+      dep_A (route CŨ, Depot->A->B): arr_A = 0 + t(O,A) = 5
+                                      srv_A = max(5, E_A=0) = 5 ; dep_A = 5 + S_A(0) = 5
+      old_dep_B (route CŨ): arr_B = dep_A + t(A,B) = 5 + 4 = 9
+                             srv_B = max(9, 0) = 9 ; old_dep_B = 9 + 0 = 9
+
+      Chèn X giữa A và B (route MỚI: Depot->A->X->B):
+      arr_X = dep_A + t(A,X) = 5 + 3 = 8   (<= late_X=20, HỢP LỆ)
+      srv_X = max(8, E_X=0) = 8 ; dep_X = 8 + S_X(2) = 10
+      arr_B_new = dep_X + t(X,B) = 10 + 6 = 16   (<= late_B=100, HỢP LỆ)
+      srv_B_new = max(16, 0) = 16 ; dep_B_new = 16 + 0 = 16
+
+      => delta_time (TAY) = dep_B_new - old_dep_B = 16 - 9 = 7
+
+    ---- Case 2: X có window hẹp [0, 6] -> arr_X = 8 > late_X = 6 -> PHẢI trả về None ----
+    """
+    print("\n" + "-" * 60)
+    print("DEMO evaluator.py - test calculate_delta_time() bằng số liệu tay")
+    print("-" * 60)
+
+    depot = Node(id=0, type='DEPOT', matrix_index=0)
+    node_A = Node(id=1, type='PARCEL_PICKUP', matrix_index=1)
+    node_B = Node(id=2, type='PARCEL_DROPOFF', matrix_index=2)
+    node_X = Node(id=3, type='PARCEL_PICKUP', matrix_index=3)
+
+    parcel_1 = ParcelRequest(
+        id=1, pickup_node=node_A, dropoff_node=node_B, revenue=0.0,
+        early_pickup=0.0, late_pickup=100.0,
+        early_dropoff=0.0, late_dropoff=100.0,
+        service_time=0.0, weight=0.0,
+    )
+
+    INF = float('inf')
+    #        O    A    B    X
+    time_matrix = [
+        [0.0, 5.0, 10.0, 7.0],   # từ O
+        [5.0, 0.0, 4.0, 3.0],    # từ A  (t(A,B)=4, t(A,X)=3)
+        [10.0, 4.0, 0.0, 6.0],   # từ B  (t(B,X)=6, và QUAN TRỌNG: t(X,B) cũng phải =6 ở dòng dưới)
+        [7.0, 3.0, 6.0, 0.0],    # từ X  (t(X,B)=6 <- nếu để INF ở đây, calculate_delta_time sẽ luôn trả None)
+    ]
+    cost_matrix = [row[:] for row in time_matrix]  # cost không dùng trong test này, copy tạm
+
+    taxi = Taxi(id=1, depot_node=depot, capacity=100.0)
+
+    dep_A = 5.0       # tính tay ở trên
+    old_dep_B = 9.0    # tính tay ở trên
+
+    # --- Case 1: window rộng [0, 20] -> phải chèn được, delta = 7 ---
+    parcel_2_wide = ParcelRequest(
+        id=2, pickup_node=node_X, dropoff_node=node_X, revenue=0.0,
+        early_pickup=0.0, late_pickup=20.0,
+        early_dropoff=0.0, late_dropoff=20.0,
+        service_time=2.0, weight=0.0,
+    )
+    instance_wide = ProblemInstance(
+        taxis=[taxi], passengers=[], parcels=[parcel_1, parcel_2_wide],
+        time_matrix=time_matrix, cost_matrix=cost_matrix,
+    )
+    delta_case1 = calculate_delta_time(
+        dep_A=dep_A, node_A=node_A, node_B=node_B,
+        old_dep_B=old_dep_B, insert_node=node_X, instance=instance_wide,
+    )
+    print(f"Case 1 (window X = [0, 20]): calculate_delta_time trả về = {delta_case1}")
+    print(f"  Kỳ vọng (tính tay) = 7.0  ->  {'KHỚP' if delta_case1 is not None and abs(delta_case1 - 7.0) < 1e-6 else 'LỆCH -> CÓ BUG!'}")
+
+    # --- Case 2: window hẹp [0, 6] -> arr_X = 8 > late_X = 6 -> phải trả về None ---
+    parcel_2_tight = ParcelRequest(
+        id=2, pickup_node=node_X, dropoff_node=node_X, revenue=0.0,
+        early_pickup=0.0, late_pickup=6.0,
+        early_dropoff=0.0, late_dropoff=6.0,
+        service_time=2.0, weight=0.0,
+    )
+    instance_tight = ProblemInstance(
+        taxis=[taxi], passengers=[], parcels=[parcel_1, parcel_2_tight],
+        time_matrix=time_matrix, cost_matrix=cost_matrix,
+    )
+    delta_case2 = calculate_delta_time(
+        dep_A=dep_A, node_A=node_A, node_B=node_B,
+        old_dep_B=old_dep_B, insert_node=node_X, instance=instance_tight,
+    )
+    print(f"Case 2 (window X = [0, 6]):  calculate_delta_time trả về = {delta_case2}")
+    print(f"  Kỳ vọng (tính tay) = None (arr_X=8 > late_X=6)  ->  {'KHỚP' if delta_case2 is None else 'LỆCH -> CÓ BUG!'}")
+
+
 # 6: Sinh dữ liệu lớn
 
 def generate_random_instance(
@@ -526,6 +628,7 @@ def main():
     demo_random_solver(instance)
     demo_hill_climbing(instance)
     demo_evaluator(instance)
+    demo_evaluator_delta_time()
 
     run_benchmark()
 
