@@ -18,6 +18,8 @@ from validator import (
 )
 from greedy_solver import GreedySolver, calculate_objective_value
 from random_solver import RandomSolver
+from hill_climbing import HillClimbingSolver
+from evaluator import calculate_delta_cost, calculate_delta_time, check_capacity_delta
 
 
 # 1: Sinh dữ liệu mẫu nhỏ
@@ -258,6 +260,170 @@ def demo_random_solver(instance: ProblemInstance):
     print(f"\nTổng lợi nhuận (Random) = {obj:.2f}")
     return routes, obj
 
+# 5b: Test hill_climbing.py (dùng _mock_relocate_operator, chưa có operators.py của Hà Thu)
+
+def demo_hill_climbing(instance: ProblemInstance):
+    """
+    Chạy HillClimbingSolver trên nền lời giải cơ sở của GreedySolver, dùng
+    _mock_relocate_operator (ngẫu nhiên) làm toán tử sinh hàng xóm tạm thời,
+    vì operators.py (relocate/swap thật) của Hà Thu chưa có.
+    Mục đích: kiểm chứng vòng lặp Hill Climbing + evaluator.py không crash,
+    và benefit sau khi chạy không bao giờ TỆ HƠN benefit trước khi chạy
+    (vì thuật toán chỉ accept khi delta_benefit > 0).
+    """
+    print("\n" + "-" * 60)
+    print("DEMO hill_climbing.py")
+    print("-" * 60)
+
+    # 1. Lấy lời giải cơ sở từ GreedySolver làm điểm khởi đầu
+    greedy_solver = GreedySolver(instance)
+    greedy_routes = greedy_solver.solve()
+    benefit_before = calculate_objective_value(greedy_routes, instance)
+
+    print("Lộ trình TRƯỚC Hill Climbing (từ Greedy):")
+    for route in greedy_routes:
+        print(f"  Taxi {route.taxi.id}: Depot -> {[s.id for s in route.stops]}")
+    print(f"Benefit TRƯỚC = {benefit_before:.2f}")
+
+    # 2. HillClimbingSolver nhận vào List[List[Node]], không phải List[Route],
+    #    nên phải tách .stops ra trước khi truyền vào.
+    initial_routes = [route.stops for route in greedy_routes]
+
+    random.seed(7)  # cố định seed để chạy lại tái lập được kết quả khi debug
+    hc_solver = HillClimbingSolver(instance, initial_routes)
+    final_stops_list = hc_solver.solve()
+
+    # 3. Đóng gói lại thành Route (giữ nguyên taxi tương ứng theo thứ tự) để
+    #    tính lại benefit bằng đúng hàm calculate_objective_value dùng chung.
+    from models import Route
+    final_routes = [
+        Route(taxi=greedy_routes[i].taxi, stops=final_stops_list[i])
+        for i in range(len(greedy_routes))
+    ]
+    benefit_after = calculate_objective_value(final_routes, instance)
+
+    print("\nLộ trình SAU Hill Climbing:")
+    for route in final_routes:
+        print(f"  Taxi {route.taxi.id}: Depot -> {[s.id for s in route.stops]}")
+    print(f"Benefit SAU  = {benefit_after:.2f}")
+
+    # 4. Cảnh báo tự động nếu benefit bị TỆ HƠN sau khi "tối ưu" -> có nghĩa là
+    #    evaluator.py hoặc vòng lặp accept/reject đang có bug logic.
+    if benefit_after < benefit_before - 1e-6:
+        print("[CẢNH BÁO] Benefit SAU < Benefit TRƯỚC -> có bug trong logic accept của Hill Climbing!")
+    else:
+        print("Benefit không giảm sau Hill Climbing -> logic accept/reject ổn (dùng mock operator).")
+
+    return final_routes, benefit_after
+
+
+# 5c: Test riêng evaluator.py (calculate_delta_cost / check_capacity_delta),
+#     đặc biệt case bưu kiện TÁCH RỜI (pickup và dropoff không nằm liền kề nhau)
+
+def demo_evaluator(instance: ProblemInstance):
+    """
+    calculate_delta_cost() trong evaluator.py chỉ tính delta cho việc chèn
+    ĐÚNG 1 node giữa 2 node A, B. Với bưu kiện tách rời (pickup ở vị trí i,
+    dropoff ở vị trí j > i, có thể có các điểm khác chen giữa), phải gọi
+    hàm này 2 LẦN riêng biệt (1 lần cho điểm chèn pickup, 1 lần cho điểm
+    chèn dropoff) rồi CỘNG LẠI - giống đúng cách get_parcel_delta_cost()
+    trong greedy_solver.py làm ở nhánh i != j.
+
+    Test này dựng 1 route có sẵn, chèn 1 bưu kiện mới TÁCH RỜI vào, rồi so
+    delta_cost tính bằng evaluator.calculate_delta_cost (gọi 2 lần, cộng
+    lại) với cách tính "từ đầu" (get_route_cost kiểu greedy_solver) để chắc
+    2 cách cho cùng kết quả.
+    """
+    print("\n" + "-" * 60)
+    print("DEMO evaluator.py - case bưu kiện tách rời")
+    print("-" * 60)
+
+    cost_mat = instance.cost_matrix
+    taxi = instance.taxis[0]
+
+    # Route có sẵn (đã hợp lệ, không tính đơn mới): P_A -> D_A -> P_C -> D_C
+    p_a, h_c = instance.passengers[0], instance.parcels[0]
+    stops = [p_a.pickup_node, p_a.dropoff_node, h_c.pickup_node, h_c.dropoff_node]
+
+    def route_cost(depot, stop_list):
+        if not stop_list:
+            return 0.0
+        c = cost_mat[depot.matrix_index][stop_list[0].matrix_index]
+        for k in range(len(stop_list) - 1):
+            c += cost_mat[stop_list[k].matrix_index][stop_list[k + 1].matrix_index]
+        return c
+
+    old_cost = route_cost(taxi.depot_node, stops)
+
+    # Bưu kiện thứ 2 (parcel[1], node 7-8) sẽ được chèn TÁCH RỜI:
+    # pickup vào vị trí i=1 (giữa D_A và P_C), dropoff vào vị trí j=3
+    # (giữa D_C và cuối route) -> có 2 điểm dừng khác (P_C, D_C) nằm
+    # giữa pickup và dropoff của bưu kiện mới, đúng nghĩa "tách rời".
+    h_d = instance.parcels[1]
+    i, j = 1, 3
+    new_stops = stops[:i] + [h_d.pickup_node] + stops[i:j] + [h_d.dropoff_node] + stops[j:]
+    new_cost_bruteforce = route_cost(taxi.depot_node, new_stops)
+    delta_cost_bruteforce = new_cost_bruteforce - old_cost
+
+    # --- Cách tính bằng evaluator.calculate_delta_cost, gọi 2 lần rồi cộng ---
+    # Điểm chèn pickup: A = node liền trước vị trí i (ở mảng CŨ), B = node đang ở vị trí i
+    A1 = stops[i - 1] if i > 0 else taxi.depot_node
+    B1 = stops[i]
+    delta_pickup = calculate_delta_cost(A1, B1, h_d.pickup_node, cost_mat)
+
+    # Điểm chèn dropoff: C = node liền trước vị trí j (ở mảng CŨ), D_next = node đang ở vị trí j
+    C1 = stops[j - 1]
+    D_next1 = stops[j] if j < len(stops) else None
+    if D_next1 is not None:
+        delta_dropoff = calculate_delta_cost(C1, D_next1, h_d.dropoff_node, cost_mat)
+    else:
+        # Chèn ở cuối route -> không có cạnh (C, D_next) để "xóa", chỉ có cạnh (C, dropoff) mới
+        delta_dropoff = cost_mat[C1.matrix_index][h_d.dropoff_node.matrix_index]
+
+    delta_cost_evaluator = delta_pickup + delta_dropoff
+
+    print(f"Route cũ: Depot -> {[s.id for s in stops]}  (cost = {old_cost:.2f})")
+    print(f"Chèn tách rời bưu kiện D: pickup tại vị trí {i}, dropoff tại vị trí {j}")
+    print(f"Route mới: Depot -> {[s.id for s in new_stops]}  (cost = {new_cost_bruteforce:.2f})")
+    print(f"Delta cost (tính lại từ đầu)         = {delta_cost_bruteforce:.4f}")
+    print(f"Delta cost (evaluator, gọi 2 lần)    = {delta_cost_evaluator:.4f}")
+    match = abs(delta_cost_bruteforce - delta_cost_evaluator) < 1e-6
+    print(f"=> {'KHỚP' if match else 'LỆCH -> CÓ BUG!'}")
+
+    # --- Test check_capacity_delta với case tách rời: phát hiện hạn chế của hàm ---
+    # check_capacity_delta CHỈ nhận 1 insert_idx (điểm pickup), KHÔNG có tham số
+    # nào cho biết dropoff nằm ở đâu -> nó cộng "weight" vào TOÀN BỘ các điểm dừng
+    # từ insert_idx đến HẾT route, coi như bưu kiện không bao giờ được giao (tệ nhất).
+    # Với bưu kiện tách rời (dropoff nằm giữa route, không phải cuối), cách tính này
+    # có thể từ chối 1 phương án chèn HOÀN TOÀN HỢP LỆ, chỉ vì tải trọng CŨ (không
+    # liên quan gì đến bưu kiện mới) ở phía sau điểm dropoff vốn đã cao sẵn.
+    print("\n--- Test check_capacity_delta với case tách rời (phát hiện hạn chế) ---")
+    capacity = 4.0  # cố ý đặt thấp hơn h_c.weight(3) + h_d.weight(2) = 5, để lộ rõ hạn chế
+    # current_loads mô phỏng: tải trọng CŨ (trước khi chèn) sau mỗi điểm dừng của route gốc
+    # (route gốc gồm 4 stop: P_A, D_A, P_C, D_C -> không có bưu kiện nào trên xe ở 2 stop đầu,
+    # có bưu kiện h_c (weight=3) từ stop index2 (P_C) đến hết vì D_C là stop cuối)
+    current_loads = [0.0, 0.0, h_c.weight, 0.0]  # load sau mỗi stop: [P_A, D_A, P_C, D_C]
+
+    # Giả sử bưu kiện D (weight=2) được chèn pickup ở vị trí i=1, và dropoff ngay
+    # sau đó ở vị trí 2 (TRƯỚC khi chạm P_C) -> cửa sổ mang hàng D rất ngắn, không
+    # hề chồng với lúc xe đang chở hàng C (index2-3) -> phải HỢP LỆ.
+    is_valid = check_capacity_delta(
+        route_stops=stops, insert_idx=1, insert_node=h_d.pickup_node,
+        capacity=capacity, current_loads=current_loads, weight=h_d.weight
+    )
+    print(f"Chèn pickup D (weight={h_d.weight}) tại vị trí 1, dropoff ngay sau (không chạm hàng C):")
+    print(f"  check_capacity_delta trả về = {is_valid}")
+    print(f"  (Load thực tế tại các vị trí sau đó: index2 có h_c.weight={h_c.weight} sẵn trên xe,")
+    print(f"   nếu hàm cộng thêm weight={h_d.weight} vào TẤT CẢ vị trí phía sau (kể cả sau khi D đã")
+    print(f"   được giao) thì {h_c.weight}+{h_d.weight}={h_c.weight + h_d.weight} so với capacity={capacity}"
+          f" -> {'VƯỢT' if h_c.weight + h_d.weight > capacity else 'không vượt'})")
+    if not is_valid and h_c.weight + h_d.weight > capacity:
+        print("  => XÁC NHẬN HẠN CHẾ: hàm từ chối phương án này dù nó hợp lệ trong thực tế,")
+        print("     vì không biết bưu kiện D đã được giao (dropoff) TRƯỚC khi xe chạm hàng C.")
+        print("     Cần thêm tham số 'dropoff_idx' để hàm chỉ cộng weight trong đúng khoảng")
+        print("     [insert_idx, dropoff_idx), không cộng tới hết route.")
+
+
 # 6: Sinh dữ liệu lớn
 
 def generate_random_instance(
@@ -358,6 +524,8 @@ def main():
     demo_validator(instance)
     demo_greedy_solver(instance)
     demo_random_solver(instance)
+    demo_hill_climbing(instance)
+    demo_evaluator(instance)
 
     run_benchmark()
 

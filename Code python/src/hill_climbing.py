@@ -1,6 +1,6 @@
 import random
 import copy
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 from models import Node, ProblemInstance
 
 from evaluator import calculate_delta_cost, calculate_delta_time, check_capacity_delta
@@ -47,14 +47,28 @@ class HillClimbingSolver:
                 non_improving_steps += 1
                 continue
 
+            # Lấy đúng capacity của XE đang được xét (route_idx), không phải xe số 0 cố định.
+            # Trước đây dùng self.instance.vehicles[0].capacity -> sai vì ProblemInstance
+            # không có field "vehicles" (chỉ có "taxis"), nên sẽ crash ngay khi delta_benefit > 0.
+            capacity = self.instance.taxis[route_idx].capacity
+
+            # Node không tự lưu "weight" (weight chỉ nằm trong ParcelRequest), nên phải tra cứu
+            # qua instance bằng get_parcel_by_node(). Trước đây insert_node.weight sẽ crash với
+            # AttributeError ngay khi gặp 1 node bưu kiện thật (từ operators.py của Hà Thu).
+            if insert_node.type == 'PARCEL_PICKUP':
+                parcel = self.instance.get_parcel_by_node(insert_node)
+                weight = parcel.weight if parcel else 0.0
+            else:
+                weight = 0.0
+
             mock_current_loads = [0.0] * len(self.routes[route_idx])
             is_capacity_valid = check_capacity_delta(
                 route_stops=self.routes[route_idx],
                 insert_idx=insert_idx,
                 insert_node=insert_node,
-                capacity=self.instance.vehicles[0].capacity, 
+                capacity=capacity,
                 current_loads=mock_current_loads,
-                weight=insert_node.weight if insert_node.type == 'PARCEL_PICKUP' else 0.0
+                weight=weight
             )
 
             if not is_capacity_valid:
