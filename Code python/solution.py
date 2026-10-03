@@ -5,8 +5,8 @@ import sys
 import time
 
 # =============================================================================
-# SOICT 2026 - Vận tải tích hợp hành khách + bưu kiện   (BẢN v3: lõi nhanh + Local Search + ALNS)
-# Chạy:  python solution_v3.py < input.txt > output.txt
+# SOICT 2026 - Vận tải tích hợp hành khách + bưu kiện   (BẢN v4: giải chính xác theo route + ALNS dự phòng)
+# Chạy:  python solution_v4.py < input.txt > output.txt
 # Cấu trúc file:  Inst (dữ liệu mảng)  ->  State (lời giải + toán tử + cache scan)  ->  greedy
 #                 -> local search  ->  ALNS (destroy/repair + SA + trọng số thích nghi)
 #                 -> verify  ->  watchdog thời gian  ->  main
@@ -14,6 +14,7 @@ import time
 # =============================================================================
 
 INF = float('inf')
+sys.setrecursionlimit(20000)
 EPS = 1e-7
 TIME_LIMIT = float(os.environ.get('SOICT_TL', 250.0))  # ALNS chạy đến mốc này (đề: 300s/test)
 POLISH = 8.0       # giây cuối dành cho Local Search "đánh bóng" lời giải tốt nhất
@@ -633,6 +634,251 @@ def alns(st, deadline, rng, on_best):
     st.restore(best_sn)
 
 
+# ----------------------------------------------------------------------------- Giải CHÍNH XÁC theo route
+# Dữ liệu thật: cửa sổ thời gian chặt + xe xuất phát lúc 0 -> số route khả thi mỗi xe rất nhỏ (vài chục đến vài nghìn),
+# nên liệt kê hết được rồi chọn tập route tốt nhất (mỗi xe <= 1 route, mỗi đơn <= 1 route) bằng:
+#   LNS (giải chính xác bài con trên nhóm xe) -> cận trên Lagrange + loại route -> B&B chính xác trên pool thu nhỏ.
+def build_pool(I, deadline, max_states=6000000, maxreq=99):
+    """Liệt kê mọi route HOÀN CHỈNH khả thi (có lời) của từng xe; giữ route tốt nhất cho mỗi (xe, tập đơn).
+    pools[k] = danh sách (lợi nhuận, mask đơn, [đỉnh]) sắp giảm dần theo lợi nhuận. Trả None nếu quá lớn / quá giờ.
+    maxreq: số đơn tối đa mỗi route (giới hạn này làm pool không còn đầy đủ nhưng nhỏ hơn nhiều)."""
+    T, C, E, L, S = I.T, I.C, I.E, I.L, I.S
+    P, D, rev, w, typ, R = I.P, I.D, I.rev, I.w, I.typ, I.R
+    pools = []
+    states = [0]
+    bad = [False]
+    # cand[u] = các đơn mà điểm đón còn với tới được từ đỉnh u (kể cả khi xuất phát ngay): bỏ qua phần còn lại cho nhanh
+    cand = [[r for r in range(R) if T[u][P[r]] <= L[P[r]]] for u in range(I.V)]
+    for k in range(I.K):
+        Q = I.Q[k] + 1e-9
+        best = {}
+        path = []
+
+        def dfs(cur, t, load, carried, used, rv, cs, nr):
+            states[0] += 1
+            if states[0] > max_states or ((states[0] & 4095) == 0 and time.time() > deadline):
+                bad[0] = True
+                return
+            if path and not carried and rv - cs > 1e-9:
+                o = best.get(used)
+                if o is None or rv - cs > o[0] + 1e-9:
+                    best[used] = (rv - cs, list(path))
+            for r in (cand[cur] if nr < maxreq else ()):
+                if (used >> r) & 1:
+                    continue
+                p = P[r]
+                a = t + T[cur][p]
+                if a > L[p]:
+                    continue
+                t1 = (a if a >= E[p] else E[p]) + S[p]
+                if typ[r] == 0:
+                    d = D[r]
+                    path.append(p)
+                    path.append(d)
+                    dfs(d, t1 + T[p][d] + S[d], load, carried, used | (1 << r), rv + rev[r], cs + C[cur][p] + C[p][d], nr + 1)
+                    path.pop()
+                    path.pop()
+                elif load + w[r] <= Q:
+                    path.append(p)
+                    dfs(p, t1, load + w[r], carried | (1 << r), used | (1 << r), rv + rev[r], cs + C[cur][p], nr + 1)
+                    path.pop()
+                if bad[0]:
+                    return
+            c = carried
+            while c:
+                low = c & -c
+                r = low.bit_length() - 1
+                c ^= low
+                d = D[r]
+                a = t + T[cur][d]
+                if a > L[d]:
+                    continue
+                path.append(d)
+                dfs(d, (a if a >= E[d] else E[d]) + S[d], load - w[r], carried & ~low, used, rv, cs + C[cur][d], nr)
+                path.pop()
+                if bad[0]:
+                    return
+
+        dfs(I.depot[k], 0.0, 0.0, 0, 0, 0.0, 0.0, 0)
+        if bad[0]:
+            return None
+        pools.append(sorted(((pf, mk, nd) for mk, (pf, nd) in best.items()), key=lambda z: -z[0]))
+    return pools
+
+
+def bnb(pools, rem, used, base, node_limit, deadline):
+    """Nhánh cận chọn route cho tập xe rem, các đơn trong 'used' bị cấm; tìm nghiệm có giá trị >= base.
+    Cận trên = tổng route tốt nhất còn tương thích của mỗi xe còn lại. Trả (nghiệm|None, bị_cắt, số_nút);
+    nghiệm = (giá trị, [(k, route)]). bị_cắt=False nghĩa là đã duyệt hết -> kết quả là TỐI ƯU."""
+    best = [base]
+    bsel = [None]
+    sel = []
+    nodes = [0]
+    stop = [False]
+
+    def rec(rem, used, cur):
+        nodes[0] += 1
+        if nodes[0] > node_limit or ((nodes[0] & 255) == 0 and time.time() > deadline):
+            stop[0] = True
+            return
+        if cur > best[0] + 1e-9:
+            best[0] = cur
+            bsel[0] = list(sel)
+        ub = 0.0
+        bk = {}
+        for k in rem:
+            for z in pools[k]:
+                if not (z[1] & used):
+                    bk[k] = z
+                    ub += z[0]
+                    break
+        if not bk or cur + ub <= best[0] + 1e-9:
+            return
+        kk = max(bk, key=lambda k: bk[k][0])
+        others = ub - bk[kk][0]
+        rem2 = rem - {kk}
+        for z in pools[kk]:
+            if z[1] & used:
+                continue
+            if cur + z[0] + others <= best[0] + 1e-9:
+                break
+            sel.append((kk, z))
+            rec(rem2, used | z[1], cur + z[0])
+            sel.pop()
+            if stop[0]:
+                return
+        rec(rem2, used, cur)
+
+    rec(frozenset(rem), used, 0.0)
+    return ((best[0], bsel[0]) if bsel[0] is not None else None), stop[0], nodes[0]
+
+
+def lns_routes(pools, chosen, deadline, rng, on_better, size=6, node_limit=30000):
+    """LNS ở mức route: chọn ngẫu nhiên một nhóm xe, giải CHÍNH XÁC lại lựa chọn route của nhóm đó (các xe khác cố định)."""
+    K = len(pools)
+    while time.time() < deadline:
+        sub = rng.sample(range(K), min(size, K))
+        subset = set(sub)
+        used = 0
+        for k in range(K):
+            if k not in subset and chosen[k]:
+                used |= chosen[k][1]
+        base = sum(chosen[k][0] for k in sub if chosen[k])
+        res, hit, nd = bnb(pools, subset, used, base, node_limit, deadline)
+        if res is not None:
+            for k in sub:
+                chosen[k] = None
+            for k, z in res[1]:
+                chosen[k] = z
+            on_better()
+        if hit:
+            if rng.random() < 0.3:
+                size = max(4, size - 1)
+        elif nd < node_limit // 10 and rng.random() < 0.3:
+            size = min(K, size + 1)
+
+
+def lagrange(R, pools, lb, deadline, iters=1500):
+    """Cận trên Lagrange (nới lỏng 'mỗi đơn tối đa 1 route' bằng giá phạt lam[r] >= 0), tối ưu bằng subgradient."""
+    K = len(pools)
+    reqs = []
+    for k in range(K):
+        row = []
+        for z in pools[k]:
+            rs = []
+            x = z[1]
+            while x:
+                low = x & -x
+                rs.append(low.bit_length() - 1)
+                x ^= low
+            row.append(rs)
+        reqs.append(row)
+    lam = [0.0] * R
+    bub, blam, theta, stall = float('inf'), lam[:], 2.0, 0
+    for _ in range(iters):
+        if time.time() > deadline:
+            break
+        ub = sum(lam)
+        cover = [0] * R
+        for k in range(K):
+            bv, bi = 0.0, -1
+            for i, z in enumerate(pools[k]):
+                v = z[0]
+                for r in reqs[k][i]:
+                    v -= lam[r]
+                if v > bv:
+                    bv, bi = v, i
+            ub += bv
+            if bi >= 0:
+                for r in reqs[k][bi]:
+                    cover[r] += 1
+        if ub < bub - 1e-9:
+            bub, blam, stall = ub, lam[:], 0
+        else:
+            stall += 1
+            if stall >= 10:
+                theta *= 0.6
+                stall = 0
+        g = [1 - c for c in cover]
+        nrm = sum(x * x for x in g)
+        if nrm == 0 or theta * (bub - lb) <= 1e-9 * nrm:
+            break
+        step = theta * (bub - lb) / nrm
+        lam = [max(0.0, l - step * x) for l, x in zip(lam, g)]
+    return bub, blam, reqs
+
+
+def fix_pools(pools, reqs, lam, ub, lb):
+    """Loại các route mà dù bắt buộc chọn nó, cận trên vẫn < lb (không thể tốt hơn lời giải hiện có)."""
+    out = []
+    for k in range(len(pools)):
+        rp = [z[0] - sum(lam[r] for r in rs) for z, rs in zip(pools[k], reqs[k])]
+        bk = max([0.0] + rp)
+        out.append([z for z, v in zip(pools[k], rp) if ub - bk + v >= lb - 1e-9])
+    return out
+
+
+def exact_solve(I, pools, deadline, rng, hold):
+    """1) B&B toàn bộ (xong -> đã TỐI ƯU, dừng).  2) Nếu chưa xong: lặp [LNS -> cận Lagrange + loại route theo lời giải
+    tốt nhất hiện có -> B&B trên pool thu nhỏ] cho đến khi chứng minh tối ưu hoặc hết giờ."""
+    K = I.K
+    allk = set(range(K))
+    chosen = [None] * K
+
+    def total():
+        return sum(z[0] for z in chosen if z)
+
+    def save():
+        hold(total(), [list(z[2]) if z else [] for z in chosen])
+
+    def adopt(res):
+        chosen[:] = [None] * K
+        for k, z in res[1]:
+            chosen[k] = z
+        save()
+
+    now = time.time()
+    res, cut, _ = bnb(pools, allk, 0, 0.0, 10 ** 12, now + min(10.0, 0.05 * (deadline - now)))
+    if res is not None:
+        adopt(res)
+    if not cut:
+        return
+    cur, chunk, lam = pools, 6.0, None
+    while time.time() < deadline:
+        lns_routes(cur, chosen, min(deadline, time.time() + chunk), rng, save)
+        lb = total()
+        if lam is None:
+            now = time.time()
+            ub, lam, reqs = lagrange(I.R, pools, lb, now + 0.15 * (deadline - now))
+        cur = fix_pools(pools, reqs, lam, ub, lb)
+        res, cut, _ = bnb(cur, allk, 0, lb - 1e-6, 10 ** 12, min(deadline, time.time() + chunk))
+        if res is not None and res[0] > lb + 1e-9:
+            adopt(res)
+        if not cut:
+            return
+        chunk = min(chunk * 1.5, 60.0)
+
+
 # ----------------------------------------------------------------------------- Kiểm tra độc lập + I/O
 def verify(I, routes):
     """Kiểm tra lời giải từ đầu theo đúng đề; trả Benefit, hoặc None nếu có vi phạm."""
@@ -679,7 +925,7 @@ def fmt(x):
     return str(int(round(x))) if abs(x - round(x)) < 1e-9 else '%.6f' % x
 
 
-HOLD = {'routes': None, 'safe': None}
+HOLD = {'routes': None, 'safe': None, 'val': 0.0}
 DONE = [False]
 
 
@@ -712,16 +958,34 @@ def finish(I, outfile):
         sys.stdout.flush()
 
 
+def hold_better(val, routes):
+    if val > HOLD['val'] + EPS:
+        HOLD['val'] = val
+        HOLD['routes'] = routes
+
+
 def solve(I, t0):
+    """Thứ tự: Greedy + Local Search (lời giải an toàn) -> thử liệt kê route + giải chính xác;
+    nếu số route quá lớn thì dùng ALNS cho đến hết giờ."""
     rng = random.Random(12345)
     st = State(I)
     deadline = t0 + TIME_LIMIT
     greedy(st, deadline)
     HOLD['safe'] = list(st.routes)
+    HOLD['val'] = verify(I, HOLD['safe']) or 0.0
     record(st)
     try:
         local_search(st, deadline, rng)
         record(st)
+        HOLD['val'] = verify(I, HOLD['routes']) or HOLD['val']
+        pools = None
+        for frac, mr in ((0.10, 99), (0.16, 4), (0.12, 3)):     # đầy đủ -> tối đa 4 đơn/route -> tối đa 3 đơn/route
+            pools = build_pool(I, min(deadline, time.time() + frac * TIME_LIMIT), 6000000 if mr == 99 else 30000000, mr)
+            if pools is not None:
+                break
+        if pools is not None:
+            exact_solve(I, pools, deadline, rng, hold_better)
+            return
         alns(st, deadline, rng, record)
         local_search(st, deadline + min(POLISH, 0.04 * TIME_LIMIT), rng)
         if st.benefit() >= (verify(I, HOLD['routes']) or -INF) - EPS:
