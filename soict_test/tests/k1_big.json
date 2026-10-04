@@ -1,0 +1,1 @@
+{"name": "k1_big", "K": 1, "N": 300, "M": 300, "V": 1201, "expect": null, "note": "K=1, 600 yêu cầu", "big": true}

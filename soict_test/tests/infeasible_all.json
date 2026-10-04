@@ -1,0 +1,1 @@
+{"name": "infeasible_all", "K": 10, "N": 50, "M": 50, "V": 210, "expect": 0, "note": "mọi cửa sổ không với tới được: đáp án = 0", "big": false}

@@ -1,0 +1,1 @@
+{"name": "huge", "K": 200, "N": 300, "M": 300, "V": 1400, "expect": null, "note": "V=1400: kiểm tra RAM/thời gian đọc input", "big": true}

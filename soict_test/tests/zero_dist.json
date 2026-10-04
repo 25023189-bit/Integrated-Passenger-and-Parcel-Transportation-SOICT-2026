@@ -1,0 +1,1 @@
+{"name": "zero_dist", "K": 5, "N": 40, "M": 40, "V": 165, "expect": 22441, "note": "mọi khoảng cách = 0: đáp án = tổng doanh thu", "big": false}

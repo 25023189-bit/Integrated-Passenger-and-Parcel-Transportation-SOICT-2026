@@ -1,0 +1,1 @@
+{"name": "asym_mid", "K": 10, "N": 50, "M": 50, "V": 210, "expect": null, "note": "T, C bất đối xứng, C độc lập với T, vi phạm bất đẳng thức tam giác", "big": false}
