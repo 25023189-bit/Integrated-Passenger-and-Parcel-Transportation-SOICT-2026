@@ -1,3 +1,7 @@
+# SOICT 2026 - Vận tải tích hợp hành khách + bưu kiện
+# Chạy:  python solution.py < input.txt > output.txt   (hoặc: python solution.py input.txt output.txt)
+# Thuật toán: Greedy + Local Search -> liệt kê route khả thi từng xe + giải chính xác (bnb + Lagrange + LNS);
+#             nếu số route quá lớn thì dùng ALNS cho đến hết giờ.
 import itertools
 import math
 import os
@@ -6,21 +10,23 @@ import sys
 import time
 from bisect import bisect_left
 INF = float('inf')
-sys.setrecursionlimit(20000)
-EPS = 1e-07
-TIME_LIMIT = float(os.environ.get('SOICT_TL', 270.0))
-POLISH = 8.0
-HARD = 290.0
-BIG_POOL = 40000
-SHRINK = 0.16
-MAX_ROUTES = 260000
+sys.setrecursionlimit(20000)       # DFS liệt kê route đệ quy sâu theo số điểm dừng
+EPS = 1e-07                        # sai số so sánh số thực
+TIME_LIMIT = float(os.environ.get('SOICT_TL', 270.0))  # ALNS chạy đến mốc này (đề: 300s/test)
+POLISH = 8.0       # giây cuối dành cho Local Search "đánh bóng" lời giải tốt nhất
+HARD = 290.0       # watchdog: tới mốc này mà chưa xong thì in lời giải tốt nhất rồi thoát
+BIG_POOL = 40000   # pool vượt ngưỡng này -> thu nhỏ bằng lọc lấn át + lọc theo lợi nhuận hiệu chỉnh Lagrange (heuristic)
+SHRINK = 0.16      # ngưỡng giữ route: lợi nhuận hiệu chỉnh >= (tốt nhất của xe) - SHRINK * (lb / K)
+MAX_ROUTES = 260000   # trần tổng số route trong pool (chống tràn bộ nhớ); vượt -> coi như liệt kê thất bại
+CACHE_SLOTS = 6        # số kết quả scan lưu cho mỗi cặp (đơn, xe), theo NỘI DUNG route (xem State.scan_c)
 STAT = {'it': 0}
-SORT_CAND = os.environ.get('SOICT_SORT', '1') != '0'
-SYM = os.environ.get('SOICT_SYM', '1') != '0'
-COMPRESS = os.environ.get('SOICT_COMPRESS', '1') != '0'
+SORT_CAND = os.environ.get('SOICT_SORT', '1') != '0'      # bật/tắt tối ưu sắp xếp ứng viên (để so sánh khi thử nghiệm)
+SYM = os.environ.get('SOICT_SYM', '1') != '0'             # bật/tắt gộp xe giống hệt nhau
+COMPRESS = os.environ.get('SOICT_COMPRESS', '1') != '0'   # bật/tắt loại đơn không thể phục vụ + nén mask
 PRM = dict(T0=0.12, T1=0.004, qf=0.3, qcap=14, U=8, p_worst=4.0, p_shaw=3.0, reset=4000, seg=60, rho=0.25, noise=0.0)
 
 class Inst(object):
+    """Đọc và lưu một test: K xe, N hành khách, M bưu kiện, ma trận thời gian T / chi phí C, cửa sổ thời gian E, L, thời gian phục vụ S."""
 
     def __init__(s, text):
         lines = [l.split('#')[0].strip() for l in text.splitlines()]
@@ -70,6 +76,7 @@ class Inst(object):
         s.C = [x[pos + i * V:pos + (i + 1) * V] for i in range(V)]
 
 class State(object):
+    """Lời giải đang xây: route từng xe + thông tin đánh giá (cache theo phiên bản route) + đơn nào đang được phục vụ bởi xe nào."""
 
     def __init__(s, ins):
         s.ins = ins
@@ -77,23 +84,33 @@ class State(object):
         s.info = [s.evaluate(k, []) for k in range(ins.K)]
         s.where = [-1] * ins.R
         s.revsum = 0.0
-        s.ver = list(range(ins.K))
-        s.cnt = ins.K
+        s.ver = [hash(())] * ins.K     # ver[k] = mã băm NỘI DUNG route k (không còn là bộ đếm tăng dần)
         s.cache = [[None] * ins.K for _ in range(ins.R)]
 
     def bump(s, k):
-        s.cnt += 1
-        s.ver[k] = s.cnt
+        """Cập nhật mã nhận diện của route k sau khi nội dung route đổi (gọi sau khi đã gán s.routes[k])."""
+        s.ver[k] = hash(tuple(s.routes[k]))
 
     def scan_c(s, r, k):
-        c = s.cache[r][k]
-        if c is not None and c[0] == s.ver[k]:
-            return c[1]
+        """scan(r, k) có cache theo NỘI DUNG route. scan chỉ phụ thuộc (đơn r, xe k, nội dung route k) nên kết quả đã tính
+        vẫn đúng khi route quay về nội dung cũ (ALNS hay thử rồi hoàn tác, hoặc gỡ rồi chèn lại đúng đơn đó). Mỗi cặp
+        (r, k) giữ tối đa CACHE_SLOTS kết quả gần nhất. Đo thử: ~96% lần gọi scan trước đây là tính lại đúng thứ đã tính."""
+        v = s.ver[k]
+        row = s.cache[r][k]
+        if row is None:
+            row = s.cache[r][k] = []
+        else:
+            for e in row:
+                if e[0] == v:
+                    return e[1]
         x = s.scan(r, k)
-        s.cache[r][k] = (s.ver[k], x)
+        row.insert(0, (v, x))
+        if len(row) > CACHE_SLOTS:
+            row.pop()
         return x
 
     def best_c(s, r):
+        """Vị trí chèn rẻ nhất của đơn r trên mọi xe (dùng cache): (chi phí, xe, i, j) hoặc None."""
         best = None
         for k in range(s.ins.K):
             x = s.scan_c(r, k)
@@ -102,6 +119,7 @@ class State(object):
         return best
 
     def evaluate(s, k, stops):
+        """Kiểm tra route k đi qua danh sách điểm dừng stops: trả None nếu vi phạm cửa sổ thời gian / tải trọng / ghép cặp, ngược lại trả thông tin thời gian (nodes, giờ rời, tải, độ trễ cho phép ...)."""
         I = s.ins
         T, C, E, L, S, W = (I.T, I.C, I.E, I.L, I.S, I.W)
         nodes = [I.depot[k]] + stops
@@ -137,9 +155,11 @@ class State(object):
         return (nodes, dep, ld, lat, c)
 
     def benefit(s):
+        """Lợi nhuận hiện tại của lời giải (doanh thu đơn đã phục vụ trừ chi phí di chuyển)."""
         return s.revsum - sum((f[4] for f in s.info))
 
     def scan(s, r, k):
+        """Tìm cách chèn đơn r vào route k rẻ nhất (điểm đón ở vị trí i, điểm giao ở vị trí j): trả (chi phí tăng thêm, i, j) hoặc None."""
         I = s.ins
         T, C, E, L, S, tp = (I.T, I.C, I.E, I.L, I.S, I.tp)
         nodes, dep, ld, lat, _ = s.info[k]
@@ -207,6 +227,7 @@ class State(object):
         return (best, bi, bj)
 
     def best_insert(s, r, ks=None):
+        """Cách chèn đơn r rẻ nhất trên các xe ks (mặc định mọi xe): (chi phí, xe, i, j) hoặc None."""
         best = None
         for k in range(s.ins.K) if ks is None else ks:
             x = s.scan(r, k)
@@ -215,6 +236,7 @@ class State(object):
         return best
 
     def insert(s, r, k, i, j):
+        """Chèn đơn r vào route k tại (i, j); trả False và giữ nguyên nếu route mới không khả thi."""
         I = s.ins
         st = s.routes[k]
         new = st[:i] + [I.P[r]] + st[i:j] + [I.D[r]] + st[j:]
@@ -229,6 +251,7 @@ class State(object):
         return True
 
     def remove(s, r):
+        """Gỡ đơn r khỏi route đang phục vụ nó; trả False nếu route còn lại không khả thi."""
         I = s.ins
         k = s.where[r]
         p, d = (I.P[r], I.D[r])
@@ -244,6 +267,7 @@ class State(object):
         return True
 
     def remove_many(s, rs):
+        """Gỡ nhiều đơn cùng lúc (bước phá hủy của ALNS)."""
         I = s.ins
         by = {}
         for r in rs:
@@ -269,9 +293,11 @@ class State(object):
         return True
 
     def snap(s, ks):
+        """Chụp nhanh route của các xe ks để có thể khôi phục."""
         return (list(s.where), s.revsum, [(k, s.routes[k], s.info[k], s.ver[k]) for k in ks])
 
     def restore(s, sn):
+        """Khôi phục trạng thái từ ảnh chụp snap."""
         s.where[:] = sn[0]
         s.revsum = sn[1]
         for k, rt, f, v in sn[2]:
@@ -280,6 +306,7 @@ class State(object):
             s.ver[k] = v
 
 def greedy(st, deadline):
+    """Dựng lời giải ban đầu: lặp lại việc chèn đơn có lãi nhất vào vị trí rẻ nhất cho đến khi hết đơn có lãi hoặc hết giờ."""
     I = st.ins
     R, K = (I.R, I.K)
     bst = [[st.scan(r, k) for k in range(K)] for r in range(R)]
@@ -307,12 +334,14 @@ def greedy(st, deadline):
                 bst[r2][k] = st.scan(r2, k)
 
 def add_unserved(st, r):
+    """Thử chèn một đơn chưa phục vụ nếu có lãi."""
     x = st.best_insert(r)
     if x is not None and st.ins.rev[r] - x[0] > EPS:
         return st.insert(r, x[1], x[2], x[3])
     return False
 
 def relocate(st, r):
+    """Thử chuyển đơn r sang vị trí/xe khác tốt hơn; không tốt hơn thì khôi phục."""
     I = st.ins
     base = st.benefit()
     sn = st.snap([st.where[r]])
@@ -329,6 +358,7 @@ def relocate(st, r):
     return False
 
 def swap(st, r1, r2):
+    """Thử hoán đổi hai đơn r1, r2 giữa hai route; không tốt hơn thì khôi phục."""
     a, b = (st.where[r1], st.where[r2])
     base = st.benefit()
     sn = st.snap({a, b})
@@ -342,6 +372,7 @@ def swap(st, r1, r2):
     return False
 
 def replace(st, ro, ri):
+    """Thử thay đơn đang phục vụ ro bằng đơn chưa phục vụ ri trên cùng xe; không tốt hơn thì khôi phục."""
     I = st.ins
     k0 = st.where[ro]
     base = st.benefit()
@@ -359,6 +390,7 @@ def replace(st, ro, ri):
     return False
 
 def local_search(st, deadline, rng):
+    """Tìm kiếm cục bộ: lặp thêm / dời / hoán đổi / thay đơn cho đến khi không cải thiện được hoặc hết giờ."""
     R = st.ins.R
     while time.time() < deadline:
         imp = False
@@ -394,16 +426,19 @@ def local_search(st, deadline, rng):
             return
 
 def _pick(cand, q, rng, p):
+    """Chọn q phần tử từ danh sách ứng viên, thiên về đầu danh sách (hệ số p càng lớn càng thiên)."""
     out = []
     while len(out) < q and cand:
         out.append(cand.pop(int(len(cand) * rng.random() ** p))[1])
     return out
 
 def d_random(st, q, rng, sv, un):
+    """Phá hủy ngẫu nhiên: gỡ q đơn đang phục vụ."""
     rs = rng.sample(sv, min(q, len(sv)))
     return (rs, []) if st.remove_many(rs) else None
 
 def d_worst(st, q, rng, sv, un):
+    """Phá hủy theo 'đơn tệ nhất': gỡ các đơn mà việc phục vụ tốn kém nhất so với tiết kiệm khi gỡ."""
     I = st.ins
     C, tp = (I.C, I.tp)
     sav = {}
@@ -431,6 +466,7 @@ def d_worst(st, q, rng, sv, un):
     return (rs, []) if st.remove_many(rs) else None
 
 def d_shaw(st, q, rng, sv, un, from_unserved):
+    """Phá hủy theo độ gần (Shaw): chọn một đơn hạt giống rồi gỡ các đơn giống nó về vị trí và thời gian."""
     I = st.ins
     T, E, P, D = (I.T, I.E, I.P, I.D)
     if from_unserved and un:
@@ -449,6 +485,7 @@ def d_shaw(st, q, rng, sv, un, from_unserved):
     return (rs, [seed] if extra else [])
 
 def r_greedy(st, pool, rng):
+    """Sửa chữa tham lam: chèn lần lượt đơn có lợi nhất."""
     I = st.ins
     K, rev, nz = (I.K, I.rev, PRM['noise'])
     cand = {r: [st.scan_c(r, k) for k in range(K)] for r in pool}
@@ -476,6 +513,7 @@ def r_greedy(st, pool, rng):
                 row[k] = st.scan_c(r2, k)
 
 def r_regret(st, pool, rng, m):
+    """Sửa chữa theo 'hối tiếc' bậc m: ưu tiên đơn mà bỏ lỡ vị trí tốt nhất sẽ thiệt nhiều nhất."""
     I = st.ins
     K, rev = (I.K, I.rev)
     cand = {r: [st.scan_c(r, k) for k in range(K)] for r in pool}
@@ -498,6 +536,7 @@ def r_regret(st, pool, rng, m):
                 row[k] = st.scan_c(r2, k)
 
 def _roulette(w, rng):
+    """Chọn chỉ số theo xác suất tỉ lệ trọng số w (bánh xe roulette)."""
     x = rng.random() * sum(w)
     for i, v in enumerate(w):
         x -= v
@@ -506,6 +545,7 @@ def _roulette(w, rng):
     return len(w) - 1
 
 def alns(st, deadline, rng, on_best):
+    """ALNS (Adaptive Large Neighborhood Search): phá hủy + sửa chữa, nhận lời giải kiểu mô phỏng luyện kim, trọng số toán tử tự điều chỉnh. Dùng khi không liệt kê được pool route."""
     I = st.ins
     R, K, V = (I.R, I.K, I.V)
     if R == 0:
@@ -582,6 +622,7 @@ def alns(st, deadline, rng, on_best):
     st.restore(best_sn)
 
 def vehicle_groups(I):
+    """Gom các xe giống hệt nhau (cùng tải trọng và cùng thời gian/chi phí từ depot): grp[k] = xe đại diện của k. Các xe cùng nhóm dùng chung pool."""
     if not SYM:
         return list(range(I.K))
     rv = [v for v in range(I.V) if I.tp[v] != 0]
@@ -593,6 +634,7 @@ def vehicle_groups(I):
     return grp
 
 def alive_requests(I):
+    """Danh sách đơn còn có thể phục vụ được (loại đơn mà không xe nào tới kịp hoặc quá tải trọng); đồng thời tính I.amin = giờ đến sớm nhất tới từng đỉnh."""
     if not COMPRESS:
         return list(range(I.R))
     V, T, L = (I.V, I.T, I.L)
@@ -624,6 +666,7 @@ def alive_requests(I):
     return alive
 
 def compact_pools(pools):
+    """Đánh số lại bit của mask chỉ trên các đơn thật sự xuất hiện trong pool để mask ngắn hơn; các xe dùng chung pool giữ chung đối tượng."""
     used = 0
     for pk in pools:
         for z in pk:
@@ -656,6 +699,7 @@ def compact_pools(pools):
     return out
 
 def metric_ok(I):
+    """Kiểm tra (lấy mẫu) bất đẳng thức tam giác của T có đủ chặt để dùng hạn lấy hàng siết cho bưu kiện hay không."""
     sv = [I.S[v] for v in range(I.V) if I.tp[v] != 0]
     if not sv:
         return False
@@ -670,16 +714,25 @@ def metric_ok(I):
     return worst <= min(sv)
 
 def build_pool(I, deadline, max_states=6000000, maxreq=99, alive=None):
-    T, C, E, L, S = (I.T, I.C, I.E, I.L, I.S)
+    """Liệt kê mọi route HOÀN CHỈNH khả thi (có lời) của từng xe; giữ route tốt nhất cho mỗi (xe, tập đơn).
+    pools[k] = danh sách (lợi nhuận, mask đơn, [đỉnh]) sắp giảm dần theo lợi nhuận. Trả None nếu quá lớn / quá giờ.
+    maxreq: số đơn tối đa mỗi route (giới hạn này làm pool không còn đầy đủ nhưng nhỏ hơn nhiều).
+    alive: danh sách request gốc còn sống (xem alive_requests). Bit c của mask = request gốc alive[c];
+           route vẫn lưu ĐỈNH GỐC nên kết quả in ra không cần ánh xạ ngược."""
+    T, C, E, L, S = I.T, I.C, I.E, I.L, I.S
     if alive is None:
         alive = list(range(I.R))
-    P, D = ([I.P[r] for r in alive], [I.D[r] for r in alive])
-    rev, w, typ = ([I.rev[r] for r in alive], [I.w[r] for r in alive], [I.typ[r] for r in alive])
+    P, D = [I.P[r] for r in alive], [I.D[r] for r in alive]
+    rev, w, typ = [I.rev[r] for r in alive], [I.w[r] for r in alive], [I.typ[r] for r in alive]
     R = len(alive)
     pools = []
     states = [0]
     nroute = [0]
     bad = [False]
+    # cand[u] = các đơn mà điểm đón còn với tới được từ đỉnh u (kể cả khi xuất phát ngay): bỏ qua phần còn lại cho nhanh
+    # 2.7: cand[u] sắp theo L[P] tăng dần, candL[u] = các L tương ứng -> khi tới u lúc t, mọi đơn có L[P] < t chắc chắn
+    #      không kịp (vì T >= 0) nên bisect bỏ qua cả đoạn đầu danh sách thay vì kiểm tra từng đơn.
+    # 2.1b: hạn lấy hàng siết LP[r] = min(L[P], L[D] - S[P] - t(P,D)) (bưu kiện lấy muộn hơn mốc này thì không giao kịp)
     metric = metric_ok(I)
     LP = []
     for c in range(R):
@@ -691,36 +744,37 @@ def build_pool(I, deadline, max_states=6000000, maxreq=99, alive=None):
             elif l2 < l:
                 l = l2
         LP.append(l)
+    # 2.3: dl[u] = giờ rời sớm nhất có thể tại u (giờ đến sớm nhất amin[u] từ mọi depot) -> chỉ giữ đơn còn kịp sau u
     amin = getattr(I, 'amin', None) or [0.0] * I.V
-    dl = [max(amin[u], E[u]) + S[u] if I.tp[u] != 0 else 0.0 for u in range(I.V)]
+    dl = [(max(amin[u], E[u]) + S[u]) if I.tp[u] != 0 else 0.0 for u in range(I.V)]
     order = sorted(range(R), key=lambda r: LP[r]) if SORT_CAND else list(range(R))
     cand = [[r for r in order if dl[u] + T[u][P[r]] <= LP[r]] for u in range(I.V)]
     candL = [[LP[r] for r in cl] for cl in cand]
     grp = vehicle_groups(I)
     for k in range(I.K):
-        if grp[k] != k:
+        if grp[k] != k:                 # 2.8: xe giống hệt xe grp[k] -> dùng chung pool, liệt kê đúng một lần
             pools.append(pools[grp[k]])
             continue
-        Q = I.Q[k] + 1e-09
+        Q = I.Q[k] + 1e-9
         best = {}
         path = []
 
         def dfs(cur, t, load, carried, used, rv, cs, nr):
             states[0] += 1
-            if states[0] > max_states or (states[0] & 4095 == 0 and time.time() > deadline):
+            if states[0] > max_states or ((states[0] & 4095) == 0 and time.time() > deadline):
                 bad[0] = True
                 return
-            if path and (not carried) and (rv - cs > 1e-09):
+            if path and not carried and rv - cs > 1e-9:
                 o = best.get(used)
-                if o is None or rv - cs > o[0] + 1e-09:
+                if o is None or rv - cs > o[0] + 1e-9:
                     if o is None:
                         nroute[0] += 1
                         if nroute[0] > MAX_ROUTES:
                             bad[0] = True
                             return
                     best[used] = (rv - cs, list(path))
-            for r in (cand[cur][bisect_left(candL[cur], t):] if SORT_CAND else cand[cur]) if nr < maxreq else ():
-                if used >> r & 1:
+            for r in ((cand[cur][bisect_left(candL[cur], t):] if SORT_CAND else cand[cur]) if nr < maxreq else ()):
+                if (used >> r) & 1:
                     continue
                 p = P[r]
                 a = t + T[cur][p]
@@ -731,12 +785,12 @@ def build_pool(I, deadline, max_states=6000000, maxreq=99, alive=None):
                     d = D[r]
                     path.append(p)
                     path.append(d)
-                    dfs(d, t1 + T[p][d] + S[d], load, carried, used | 1 << r, rv + rev[r], cs + C[cur][p] + C[p][d], nr + 1)
+                    dfs(d, t1 + T[p][d] + S[d], load, carried, used | (1 << r), rv + rev[r], cs + C[cur][p] + C[p][d], nr + 1)
                     path.pop()
                     path.pop()
                 elif load + w[r] <= Q:
                     path.append(p)
-                    dfs(p, t1, load + w[r], carried | 1 << r, used | 1 << r, rv + rev[r], cs + C[cur][p], nr + 1)
+                    dfs(p, t1, load + w[r], carried | (1 << r), used | (1 << r), rv + rev[r], cs + C[cur][p], nr + 1)
                     path.pop()
                 if bad[0]:
                     return
@@ -754,13 +808,16 @@ def build_pool(I, deadline, max_states=6000000, maxreq=99, alive=None):
                 path.pop()
                 if bad[0]:
                     return
+
         dfs(I.depot[k], 0.0, 0.0, 0, 0, 0.0, 0.0, 0)
         if bad[0]:
             return None
         pools.append(sorted(((pf, mk, nd) for mk, (pf, nd) in best.items()), key=lambda z: -z[0]))
     return pools
 
+
 def bnb(pools, rem, used, base, node_limit, deadline, grp=None):
+    """Nhánh-và-cận chọn mỗi xe tối đa một route từ pool sao cho các đơn không trùng nhau và tổng lợi nhuận lớn nhất. Trả (lời giải tốt nhất, có bị cắt giữa chừng không, ...)."""
     if grp is None:
         grp = list(range(len(pools)))
     best = [base]
@@ -823,6 +880,7 @@ def bnb(pools, rem, used, base, node_limit, deadline, grp=None):
     return ((best[0], bsel[0]) if bsel[0] is not None else None, stop[0], nodes[0])
 
 def lns_routes(pools, chosen, deadline, rng, on_better, size=6, node_limit=30000, grp=None):
+    """Tìm kiếm lân cận lớn trên các route đã chọn: lặp chọn ngẫu nhiên một nhóm xe, giải lại nhóm đó bằng bnb với các xe còn lại giữ nguyên."""
     K = len(pools)
     while time.time() < deadline:
         sub = rng.sample(range(K), min(size, K))
@@ -846,6 +904,7 @@ def lns_routes(pools, chosen, deadline, rng, on_better, size=6, node_limit=30000
             size = min(K, size + 1)
 
 def lagrange(R, pools, lb, deadline, iters=1500):
+    """Nới lỏng Lagrange (tối ưu dưới gradient) cho bài toán chọn route: trả cận trên ub, nhân tử lam theo từng đơn và danh sách đơn của mỗi route."""
     K = len(pools)
     reqs = []
     for k in range(K):
@@ -894,6 +953,7 @@ def lagrange(R, pools, lb, deadline, iters=1500):
     return (bub, blam, reqs)
 
 def fix_pools(pools, reqs, lam, ub, lb):
+    """Lọc pool bằng cận Lagrange: bỏ route mà dù chọn nó cũng không thể vượt lời giải hiện có lb (lọc an toàn, không mất tối ưu)."""
     out = []
     for k in range(len(pools)):
         rp = [z[0] - sum((lam[r] for r in rs)) for z, rs in zip(pools[k], reqs[k])]
@@ -902,6 +962,7 @@ def fix_pools(pools, reqs, lam, ub, lb):
     return out
 
 def dominance_filter(pools):
+    """Bỏ route bị lấn át: có route khác dùng tập đơn con mà lợi nhuận không thấp hơn."""
     out = []
     for pk in pools:
         best = {z[1]: z[0] for z in pk}
@@ -931,6 +992,7 @@ def dominance_filter(pools):
     return out
 
 def shrink_pools(I, pools, deadline, rng, hold):
+    """Thu nhỏ pool quá lớn (heuristic): lọc lấn át rồi giữ route có lợi nhuận hiệu chỉnh Lagrange gần tốt nhất của xe."""
     K = I.K
     pools = dominance_filter(pools)
     Rc = max([0] + [z[1].bit_length() for pk in pools for z in pk])
@@ -956,6 +1018,7 @@ def shrink_pools(I, pools, deadline, rng, hold):
     return out
 
 def exact_solve(I, pools, deadline, rng, hold):
+    """Giải chọn route: bnb thử toàn bộ trong thời gian ngắn; nếu chưa chứng minh được tối ưu thì xen kẽ LNS và bnb trên pool đã lọc bằng cận Lagrange cho đến hết giờ."""
     K = I.K
     allk = set(range(K))
     chosen = [None] * K
@@ -995,6 +1058,7 @@ def exact_solve(I, pools, deadline, rng, hold):
         chunk = min(chunk * 1.5, 60.0)
 
 def verify(I, routes):
+    """Kiểm tra độc lập một nghiệm (đơn không trùng, ghép cặp, thời gian, tải trọng); trả tổng lợi nhuận hoặc None nếu không khả thi."""
     seen = set()
     total = 0.0
     for k, stops in enumerate(routes):
@@ -1034,14 +1098,17 @@ def verify(I, routes):
     return total
 
 def fmt(x):
+    """Định dạng số khi in kết quả."""
     return str(int(round(x))) if abs(x - round(x)) < 1e-09 else '%.6f' % x
 HOLD = {'routes': None, 'safe': None, 'val': 0.0}
 DONE = [False]
 
 def record(st):
+    """Ghi nhớ route hiện tại của st làm lời giải tốt nhất."""
     HOLD['routes'] = list(st.routes)
 
 def finish(I, outfile):
+    """Ghi kết quả ra file/stdout: chọn lời giải đã được verify (ưu tiên HOLD['routes'], dự phòng HOLD['safe'])."""
     if DONE[0]:
         return
     DONE[0] = True
@@ -1065,11 +1132,14 @@ def finish(I, outfile):
         sys.stdout.flush()
 
 def hold_better(val, routes):
+    """Cập nhật lời giải tốt nhất nếu giá trị val tốt hơn."""
     if val > HOLD['val'] + EPS:
         HOLD['val'] = val
         HOLD['routes'] = routes
 
 def solve(I, t0):
+    """Thứ tự: Greedy + Local Search (lời giải an toàn) -> thử liệt kê route + giải chính xác;
+    nếu số route quá lớn thì dùng ALNS cho đến hết giờ."""
     rng = random.Random(12345)
     st = State(I)
     deadline = t0 + TIME_LIMIT
@@ -1083,13 +1153,13 @@ def solve(I, t0):
         HOLD['val'] = verify(I, HOLD['routes']) or HOLD['val']
         pools = None
         alive = alive_requests(I)
-        for frac, mr in ((0.1, 99), (0.16, 4), (0.12, 3)):
+        for frac, mr in ((0.10, 99), (0.16, 4), (0.12, 3)):     # đầy đủ -> tối đa 4 đơn/route -> tối đa 3 đơn/route
             pools = build_pool(I, min(deadline, time.time() + frac * TIME_LIMIT), 6000000 if mr == 99 else 30000000, mr, alive)
             if pools is not None:
                 pools = compact_pools(pools)
                 break
         if pools is not None:
-            if sum((len(p) for p in pools)) > BIG_POOL:
+            if sum(len(p) for p in pools) > BIG_POOL:
                 try:
                     pools = shrink_pools(I, pools, deadline, rng, hold_better)
                 except Exception:
@@ -1103,7 +1173,9 @@ def solve(I, t0):
     except Exception:
         pass
 
+
 def arm_watchdog(I, outfile, t0):
+    """Hẹn giờ cứng bằng SIGALRM (không dùng luồng: nhiều máy chấm cấm tạo luồng). Lỗi gì cũng bỏ qua."""
     try:
         import signal
 
@@ -1118,6 +1190,7 @@ def arm_watchdog(I, outfile, t0):
         pass
 
 def main():
+    """Đọc test (file hoặc stdin), giải, rồi ghi kết quả; watchdog đảm bảo luôn có kết quả trước giới hạn thời gian."""
     t0 = time.time()
     args = [a for a in sys.argv[1:] if not a.startswith('--')]
     text = open(args[0]).read() if args else sys.stdin.read()
