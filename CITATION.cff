@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the accompanying technical report."
+title: "Integrated Passenger and Parcel Transportation - SOICT 2026 solver"
+type: software
+authors:
+  - family-names: "Bùi"
+    given-names: "Thế Dũng"
+  - family-names: "Nguyễn"
+    given-names: "Hà Thu"
+repository-code: "https://github.com/25023189-bit/Integrated-Passenger-and-Parcel-Transportation-SOICT-2026"
+license: MIT
+preferred-citation:
+  type: article
+  title: "A Hybrid Exact-Heuristic Solver for the Integrated Passenger and Parcel Transportation Problem"
+  authors:
+    - family-names: "Bui"
+      given-names: "The Dung"
+    - family-names: "Nguyen"
+      given-names: "Ha Thu"
+  journal: "arXiv preprint arXiv:2611.22043"
+  year: 2026
+  url: "https://arxiv.org/abs/2611.22043"
